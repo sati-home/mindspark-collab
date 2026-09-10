@@ -124,7 +124,14 @@ export function createApp({ publicDir, storage, session, authSecret, allowedInst
     let body = readFileSync(real);
     const isHtml = file.endsWith(sep + 'index.html');
     if (isHtml) body = Buffer.from(inject(body.toString('utf8')));
-    res.writeHead(200, { ...(isHtml ? HTML_HEADERS : SECURITY_HEADERS), 'Content-Type': type, 'Cache-Control': 'no-cache' }); res.end(body);
+    // The OAuth callback lands in a popup coming from the forge (whose opener
+    // policy is unsafe-none); if this document's policy differs, the browser
+    // puts it in a new browsing-context group and window.opener is gone - so
+    // it never posts the code back. This one page therefore carries none.
+    const headers = file.endsWith(sep + 'oauth-callback.html')
+      ? { ...SECURITY_HEADERS, 'Cross-Origin-Opener-Policy': 'unsafe-none' }
+      : (isHtml ? HTML_HEADERS : SECURITY_HEADERS);
+    res.writeHead(200, { ...headers, 'Content-Type': type, 'Cache-Control': 'no-cache' }); res.end(body);
   }
 
   const server = http.createServer(async (req, res) => {

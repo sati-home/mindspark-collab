@@ -345,6 +345,9 @@ describe('hardening', () => {
     }
     const html = await fetch(s.base + '/');
     assert.match(html.headers.get('content-security-policy') || '', /frame-ancestors 'none'/, 'the header CSP carries what the meta tag cannot');
+    writeFileSync(join(s.dir, 'public', 'oauth-callback.html'), '<p>cb</p>');
+    assert.equal((await fetch(s.base + '/oauth-callback.html')).headers.get('cross-origin-opener-policy'), 'unsafe-none',
+      'the popup callback must keep its opener across the forge round-trip');
   });
 
   test('a symlink under PUBLIC_DIR pointing outside is not served', async () => {
