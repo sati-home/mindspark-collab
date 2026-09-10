@@ -89,7 +89,13 @@ export function createApp({ publicDir, storage, session, authSecret, allowedInst
   }
 
   const server = http.createServer(async (req, res) => {
-    const url = new URL(req.url, 'http://x');
+    // Node hands the request target through verbatim, and an absolute-form one
+    // (RFC 7230 5.3.2, e.g. "GET http://[abc]/ HTTP/1.1") can be unparseable.
+    // Parsing outside the try turned that into an unhandled rejection - i.e. a
+    // remote kill switch - so the parse gets its own guard and a plain 400.
+    let url;
+    try { url = new URL(req.url, 'http://x'); }
+    catch { return json(res, 400, { error: 'bad request target' }); }
     try {
       if (req.method === 'OPTIONS' && allowedOrigin) { res.writeHead(204, cors); return res.end(); }
       if (url.pathname === '/healthz') return json(res, 200, { mode: 'collab' });
@@ -118,7 +124,12 @@ export function createApp({ publicDir, storage, session, authSecret, allowedInst
   });
 
   server.on('upgrade', (req, socket, head) => {
-    const room = roomOf(new URL(req.url, 'http://x').pathname);
+    // Same unparseable-target hazard as above, and here there is no response
+    // object yet: answer by hand on the raw socket and hang up.
+    let pathname;
+    try { pathname = new URL(req.url, 'http://x').pathname; }
+    catch { socket.write('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n'); return socket.destroy(); }
+    const room = roomOf(pathname);
     if (!room) { socket.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n'); return socket.destroy(); }
     const ws = acceptUpgrade(req, socket, head);
     if (ws) rooms.join(room, ws).catch(() => ws.close(1011));

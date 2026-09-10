@@ -1,8 +1,9 @@
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import net from 'node:net';
 import { createApp } from '../app.js';
 import { openStorage } from '../storage.js';
 import { createSession } from '../session.js';
@@ -29,6 +30,18 @@ async function start(over = {}) {
   return { srv, base, storage, dir };
 }
 const j = async r => ({ status: r.status, body: await r.json().catch(() => null), headers: r.headers });
+// Speak HTTP by hand: fetch() will not send an absolute-form request target,
+// and that is exactly the shape Node hands straight to the handler.
+const raw = (base, text) => new Promise((ok, fail) => {
+  const { port, hostname } = new URL(base);
+  const sock = net.connect(Number(port), hostname, () => sock.write(text));
+  let out = '';
+  sock.setTimeout(4000, () => { sock.destroy(); ok(out); });
+  sock.on('data', d => { out += d; if (out.includes('\r\n\r\n')) { sock.destroy(); ok(out); } });
+  sock.on('end', () => ok(out));
+  sock.on('close', () => ok(out));
+  sock.on('error', e => (out ? ok(out) : fail(e)));
+});
 
 describe('app', () => {
   const started = [];
@@ -107,6 +120,22 @@ describe('app', () => {
 
     const underPut = await j(await fetch(s.base + '/api/collab/roomsmall', { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + owner }, body: JSON.stringify({ title: 'ok', nodes: {} }) }));
     assert.equal(underPut.status, 200);
+  });
+
+  test('a malformed absolute-form request target is answered 400, not a crash', async () => {
+    const s = await start(); started.push(s);
+    const res = await raw(s.base, 'GET http://[abc]/ HTTP/1.1\r\nHost: x\r\n\r\n');
+    assert.match(res, /^HTTP\/1\.1 400/, 'bad request target must be a 400');
+    const health = await j(await fetch(s.base + '/healthz'));
+    assert.equal(health.status, 200, 'the server survives the malformed target');
+  });
+
+  test('a malformed absolute-form target on an upgrade is answered 400, not a crash', async () => {
+    const s = await start(); started.push(s);
+    const res = await raw(s.base, 'GET http://[abc]/ HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n');
+    assert.match(res, /^HTTP\/1\.1 400/, 'bad upgrade target must be a 400');
+    const health = await j(await fetch(s.base + '/healthz'));
+    assert.equal(health.status, 200, 'the server survives the malformed upgrade target');
   });
 
   test('CSP directive missing from index.html is left unchanged and warned once at createApp time', async () => {
