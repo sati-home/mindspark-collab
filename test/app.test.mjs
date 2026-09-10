@@ -106,9 +106,13 @@ describe('app', () => {
     const welcome = await new Promise(r => { c.onmessage = e => r(JSON.parse(e.data)); });
     assert.equal(welcome.t, 'welcome'); assert.deepEqual(welcome.snapshot, { title: 'live' });
     c.close();
+    // A refused upgrade surfaces as `error` and, depending on the Node version,
+    // may or may not be followed by `close` (22 stops at error, 26 closes too) -
+    // so settle on whichever comes first and assert the socket never opened.
     const bad = new WebSocket(s.base.replace('http', 'ws') + '/other');
-    const code = await new Promise(r => { bad.onclose = e => r(e.code); bad.onerror = () => {}; });
-    assert.notEqual(code, 1000, 'upgrade outside the room path is refused');
+    const outcome = await new Promise(r => { bad.onopen = () => r('open'); bad.onerror = () => r('error'); bad.onclose = e => r('close:' + e.code); });
+    assert.notEqual(outcome, 'open', 'upgrade outside the room path is refused');
+    assert.notEqual(outcome, 'close:1000', 'a refusal is not a clean close');
   });
 
   test('CORS headers only when an allowed origin is configured', async () => {
