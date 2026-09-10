@@ -1,0 +1,51 @@
+# CI for mindspark-collab on a self-managed GitLab (Free tier).
+#   test      - unit + e2e against the pinned upstream checkout
+#   sast /    - GitLab's built-in Semgrep-based SAST and secret detection
+#   secrets     (templates are included in the Free tier)
+#   trivy     - filesystem/config scan of the repo and an image scan of the
+#               built container (needs a runner with the Docker socket)
+stages: [test, scan]
+
+include:
+  - template: Jobs/SAST.gitlab-ci.yml
+  - template: Jobs/Secret-Detection.gitlab-ci.yml
+
+variables:
+  SAST_EXCLUDED_PATHS: "upstream, test/upstream, docs"
+  SECRET_DETECTION_EXCLUDED_PATHS: "upstream"
+
+test:
+  stage: test
+  image: node:22-alpine
+  before_script:
+    - apk add --no-cache git
+    - npm run fetch-upstream -- "$(cat .upstream-ref)" --patch
+  script:
+    - npm test
+    - npm run e2e
+
+# The SAST/secret jobs from the templates run in the "test" stage by default;
+# pin them to "scan" so a failing unit test stops before the analyzers run.
+semgrep-sast:
+  stage: scan
+secret_detection:
+  stage: scan
+
+trivy-fs:
+  stage: scan
+  image:
+    name: aquasec/trivy:latest
+    entrypoint: [""]
+  script:
+    - trivy fs --scanners vuln,misconfig,secret --exit-code 1 --severity HIGH,CRITICAL --skip-dirs upstream .
+  allow_failure: true
+
+trivy-image:
+  stage: scan
+  image: docker:cli
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+  script:
+    - docker build -f docker/Dockerfile --build-arg MINDSPARK_REF="$(cat .upstream-ref)" -t mindspark-collab:ci .
+    - docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --severity HIGH,CRITICAL mindspark-collab:ci
+  allow_failure: true
