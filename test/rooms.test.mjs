@@ -13,6 +13,27 @@ function memStorage() {
 }
 const last = ws => ws.sent[ws.sent.length - 1];
 
+// A storage adapter that rejects undefined values, mirroring storage.js's SQLite binding.
+function throwingStorage() {
+  const store = new Map();
+  return { room() { return {
+    async get(k) { return store.get(k); },
+    async put(k, v) { if (v === undefined) throw new TypeError('cannot bind undefined'); store.set(k, v); },
+    async delete(k) { store.delete(k); },
+  }; } };
+}
+
+// A storage adapter whose get() resolves on a later tick, to exercise the join/close race.
+function delayedStorage() {
+  const rooms = new Map();
+  return { room(id) { if (!rooms.has(id)) rooms.set(id, new Map()); const m = rooms.get(id);
+    return {
+      async get(k) { await new Promise(r => setTimeout(r, 5)); return m.get(k); },
+      async put(k, v) { m.set(k, v); },
+      async delete(k) { m.delete(k); },
+    }; } };
+}
+
 describe('rooms', () => {
   test('welcome carries id, colour, stored snapshot and the peers already present; join is broadcast', async () => {
     const st = memStorage(); await st.room('r').put('snapshot', { title: 'S' });
@@ -73,6 +94,35 @@ describe('rooms', () => {
     await rooms.join('r', a); await rooms.join('r', b);
     const before = b.sent.length;
     a.emit('message', '{not json');
+    assert.equal(b.sent.length, before);
+  });
+
+  test('a snapshot message without map does not crash the process; the room keeps relaying afterwards', async () => {
+    const rooms = createRooms(throwingStorage());
+    const a = new FakeWs(), b = new FakeWs();
+    await rooms.join('r', a); await rooms.join('r', b);
+    a.emit('message', JSON.stringify({ t: 'snapshot' }));
+    await new Promise(r => setTimeout(r, 5));
+    a.emit('message', JSON.stringify({ t: 'op', ops: [] }));
+    assert.deepEqual(last(b), { t: 'op', ops: [], from: a.sent[0].id });
+  });
+
+  test('a socket that closes while storage.get is pending is cleaned up, and never receives a welcome', async () => {
+    const rooms = createRooms(delayedStorage());
+    const a = new FakeWs();
+    const joined = rooms.join('r', a);
+    a.emit('close', 1000);
+    await joined;
+    assert.equal(rooms.size(), 0);
+    assert.equal(a.sent.length, 0);
+  });
+
+  test('a bare JSON array is ignored, not relayed without a from tag', async () => {
+    const rooms = createRooms(memStorage());
+    const a = new FakeWs(), b = new FakeWs();
+    await rooms.join('r', a); await rooms.join('r', b);
+    const before = b.sent.length;
+    a.emit('message', JSON.stringify([1, 2, 3]));
     assert.equal(b.sent.length, before);
   });
 });

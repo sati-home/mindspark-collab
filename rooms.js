@@ -21,23 +21,28 @@ export function createRooms(storage) {
     r.sockets.set(ws, me);
     const store = storage.room(roomId);
 
-    const snapshot = await store.get('snapshot');
-    ws.send(JSON.stringify({ t: 'welcome', id: me.id, color, snapshot: snapshot || null, peers: peers(r, ws) }));
-    broadcast(r, ws, { t: 'join', id: me.id, color });
-
+    // Listeners go on before any await: a close during the storage round-trip below
+    // must still be observed, or the room would leak the socket forever.
     ws.on('message', async text => {
-      let m; try { m = JSON.parse(text); } catch { return; }
-      if (!m || typeof m !== 'object') return;
-      if (m.t === 'snapshot') { await store.put('snapshot', m.map); return; }          // stored opaquely, not relayed
-      if (m.t === 'name') { me.name = String(m.name || '').slice(0, 40); broadcast(r, ws, { t: 'name', id: me.id, name: me.name }); return; }
-      m.from = me.id;                                                                   // tag, relay to the others
-      broadcast(r, ws, m);
+      try {
+        let m; try { m = JSON.parse(text); } catch { return; }
+        if (!m || typeof m !== 'object' || Array.isArray(m)) return;
+        if (m.t === 'snapshot') { if (m.map !== undefined) await store.put('snapshot', m.map); return; } // stored opaquely, not relayed
+        if (m.t === 'name') { me.name = String(m.name || '').slice(0, 40); broadcast(r, ws, { t: 'name', id: me.id, name: me.name }); return; }
+        m.from = me.id;                                                                   // tag, relay to the others
+        broadcast(r, ws, m);
+      } catch (err) { console.warn('rooms: message handler failed', err); }             // never let a bad frame or a storage failure crash the process
     });
     ws.on('close', () => {
       r.sockets.delete(ws);
       broadcast(r, ws, { t: 'leave', id: me.id });
       if (r.sockets.size === 0) rooms.delete(roomId);
     });
+
+    const snapshot = await store.get('snapshot');
+    if (!r.sockets.has(ws)) return;                                                     // closed while storage.get was pending
+    ws.send(JSON.stringify({ t: 'welcome', id: me.id, color, snapshot: snapshot || null, peers: peers(r, ws) }));
+    broadcast(r, ws, { t: 'join', id: me.id, color });
   }
   return { join, size: () => rooms.size };
 }
