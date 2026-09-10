@@ -51,6 +51,47 @@ describe('ws', () => {
     assert.equal(serverClosed, 1000);
   });
 
+  test('closing inside a message handler suppresses a second frame already buffered in the same chunk', async () => {
+    const srv = http.createServer(); servers.push(srv);
+    const log = [];
+    srv.on('upgrade', (req, socket, head) => {
+      const ws = acceptUpgrade(req, socket, head);
+      ws.on('message', t => { log.push(['message', t]); if (t === 'one') ws.close(); });
+      ws.on('close', code => log.push(['close', code]));
+    });
+    await new Promise(r => srv.listen(0, '127.0.0.1', r));
+    const port = srv.address().port;
+
+    const socket = await new Promise((resolve, reject) => {
+      const req = http.request({
+        host: '127.0.0.1', port, path: '/',
+        headers: { Connection: 'Upgrade', Upgrade: 'websocket', 'Sec-WebSocket-Key': 'dGhlIHNhbXBsZSBub25jZQ==', 'Sec-WebSocket-Version': '13' },
+      });
+      req.on('upgrade', (res, sock) => resolve(sock));
+      req.on('error', reject);
+      req.end();
+    });
+
+    // Two masked client text frames, written as a single chunk - as if both
+    // arrived before the server got around to reading the socket.
+    const maskedTextFrame = text => {
+      const payload = Buffer.from(text, 'utf8');
+      const mask = Buffer.from([0x01, 0x02, 0x03, 0x04]);
+      const masked = Buffer.alloc(payload.length);
+      for (let i = 0; i < payload.length; i++) masked[i] = payload[i] ^ mask[i & 3];
+      const head = Buffer.from([0x81, 0x80 | payload.length]);
+      return Buffer.concat([head, mask, masked]);
+    };
+    socket.write(Buffer.concat([maskedTextFrame('one'), maskedTextFrame('two')]));
+
+    try {
+      await new Promise(r => setTimeout(r, 50));
+      assert.deepEqual(log, [['message', 'one'], ['close', 1000]]);
+    } finally {
+      socket.destroy();
+    }
+  });
+
   test('a non-websocket upgrade is refused with 400 and null', async () => {
     const srv = http.createServer(); servers.push(srv);
     let result = 'unset';

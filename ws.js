@@ -18,14 +18,17 @@ export class ServerSocket extends EventEmitter {
   send(text) { if (!this.closed) this.socket.write(frame(0x1, Buffer.from(String(text), 'utf8'))); }
   close(code = 1000) {
     if (this.closed) return;
-    const b = Buffer.alloc(2); b.writeUInt16BE(code);
+    const wire = Number.isInteger(code) && code >= 1000 && code <= 4999
+      && code !== 1004 && code !== 1005 && code !== 1006 ? code : 1000;
+    const b = Buffer.alloc(2); b.writeUInt16BE(wire);
     try { this.socket.write(frame(0x8, b)); } catch {}
-    this.socket.end(); this._finish(code);
+    this.socket.end(); this._finish(wire);
   }
   _finish(code) { if (this.closed) return; this.closed = true; this.emit('close', code); }
   _onData(chunk) {
     this.buf = Buffer.concat([this.buf, chunk]);
     for (;;) {
+      if (this.closed) return;
       if (this.buf.length < 2) return;
       const b0 = this.buf[0], b1 = this.buf[1];
       const fin = (b0 & 0x80) !== 0, op = b0 & 0x0f, masked = (b1 & 0x80) !== 0;
@@ -41,7 +44,7 @@ export class ServerSocket extends EventEmitter {
       for (let i = 0; i < payload.length; i++) payload[i] ^= mask[i & 3];
       this.buf = this.buf.subarray(off + 4 + len);
       if (op === 0x1) this.emit('message', payload.toString('utf8'));
-      else if (op === 0x8) { const code = payload.length >= 2 ? payload.readUInt16BE(0) : 1005; this.close(code === 1005 ? 1000 : code); this._finish(code); return; }
+      else if (op === 0x8) { this.close(payload.length >= 2 ? payload.readUInt16BE(0) : 1005); return; }
       else if (op === 0x9) this.socket.write(frame(0xA, payload));
       // 0xA pong and 0x2 binary: ignored.
     }
