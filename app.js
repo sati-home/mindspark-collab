@@ -2,7 +2,7 @@
 // shared-map API (upstream collab-http, unmodified) and WebSocket upgrades
 // on the room URLs. Same origin by default, so no CORS unless configured.
 import http from 'node:http';
-import { readFileSync, statSync } from 'node:fs';
+import { readFileSync, statSync, realpathSync } from 'node:fs';
 import { resolve, join, sep, extname } from 'node:path';
 import { handleCollabHttp } from './upstream/collab-http.js';
 import { verifyJWT, authorizeRequest } from './upstream/auth-core.js';
@@ -13,6 +13,17 @@ import { createLimits } from './limits.js';
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8', '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8' };
+
+// Headers the app's <meta> CSP cannot express (frame-ancestors) or that only a
+// server can set. Sent on every response, static or JSON. HSTS belongs on the
+// proxy that terminates TLS.
+const SECURITY_HEADERS = {
+  'X-Frame-Options': 'DENY',
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'no-referrer',
+  'Cross-Origin-Opener-Policy': 'same-origin',
+};
+const HTML_HEADERS = { ...SECURITY_HEADERS, 'Content-Security-Policy': "frame-ancestors 'none'" };
 
 const MAX_BODY = 16 * 1024 * 1024;
 // Maps are small JSON documents (upstream's own GitHub path caps them at 1 MiB),
@@ -38,7 +49,7 @@ export function createApp({ publicDir, storage, session, authSecret, allowedInst
     if (trustProxy) { const xff = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim(); if (xff) return xff; }
     return req.socket.remoteAddress || 'unknown';
   };
-  const tooMany = (res) => { res.writeHead(429, { ...cors, 'Retry-After': '1', 'Content-Type': 'application/json; charset=utf-8' }); res.end('{"error":"too many requests"}'); };
+  const tooMany = (res) => { res.writeHead(429, { ...SECURITY_HEADERS, ...cors, 'Retry-After': '1', 'Content-Type': 'application/json; charset=utf-8' }); res.end('{"error":"too many requests"}'); };
   const bearer = req => { const m = String(req.headers.authorization || '').match(/^Bearer\s+(.+)$/i); return m ? m[1] : ''; };
   const root = resolve(publicDir);
   const env = { AUTH_SECRET: authSecret };
@@ -50,7 +61,7 @@ export function createApp({ publicDir, storage, session, authSecret, allowedInst
   // race the socket teardown and never reach the client (seen as ECONNRESET).
   const json = (res, status, body, req) => {
     const payload = JSON.stringify(body);
-    res.writeHead(status, { ...cors, 'Content-Type': 'application/json; charset=utf-8' });
+    res.writeHead(status, { ...SECURITY_HEADERS, ...cors, 'Content-Type': 'application/json; charset=utf-8' });
     if (req) res.end(payload, () => req.destroy()); else res.end(payload);
   };
   // Unauthenticated bodies must never grow unbounded in memory: past the cap, further
@@ -93,17 +104,24 @@ export function createApp({ publicDir, storage, session, authSecret, allowedInst
     } catch { /* index.html missing is fine; serveStatic will 404 on request */ }
   }
 
+  const realRoot = (() => { try { return realpathSync(root); } catch { return root; } })();
   function serveStatic(req, res) {
-    let pathname; try { pathname = decodeURIComponent(new URL(req.url, 'http://x').pathname); } catch { res.writeHead(400); return res.end(); }
+    const bare = status => { res.writeHead(status, SECURITY_HEADERS); res.end(); };
+    let pathname; try { pathname = decodeURIComponent(new URL(req.url, 'http://x').pathname); } catch { return bare(400); }
     if (pathname.endsWith('/')) pathname += 'index.html';
     const file = resolve(root, '.' + pathname);
-    if (file !== root && !file.startsWith(root + sep)) { res.writeHead(404); return res.end(); }
-    let st; try { st = statSync(file); } catch { res.writeHead(404); return res.end(); }
-    if (!st.isFile()) { res.writeHead(404); return res.end(); }
+    if (file !== root && !file.startsWith(root + sep)) return bare(404);
+    // The lexical check above stops `..`; this one stops a symlink under the
+    // public dir that points outside it (statSync/readFileSync follow links).
+    let real; try { real = realpathSync(file); } catch { return bare(404); }
+    if (real !== realRoot && !real.startsWith(realRoot + sep)) return bare(404);
+    let st; try { st = statSync(real); } catch { return bare(404); }
+    if (!st.isFile()) return bare(404);
     const type = TYPES[extname(file)] || 'application/octet-stream';
-    let body = readFileSync(file);
-    if (file.endsWith(sep + 'index.html')) body = Buffer.from(inject(body.toString('utf8')));
-    res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-cache' }); res.end(body);
+    let body = readFileSync(real);
+    const isHtml = file.endsWith(sep + 'index.html');
+    if (isHtml) body = Buffer.from(inject(body.toString('utf8')));
+    res.writeHead(200, { ...(isHtml ? HTML_HEADERS : SECURITY_HEADERS), 'Content-Type': type, 'Cache-Control': 'no-cache' }); res.end(body);
   }
 
   const server = http.createServer(async (req, res) => {
@@ -143,7 +161,9 @@ export function createApp({ publicDir, storage, session, authSecret, allowedInst
       if (req.method !== 'GET' && req.method !== 'HEAD') return json(res, 405, { error: 'method not allowed' });
       serveStatic(req, res);
     } catch (e) {
-      console.error(req.method, req.url, e);
+      // Never the URL: room ids in it are capabilities and logs travel.
+      const route = url.pathname.startsWith('/api/collab/') ? '/api/collab/<room>' : url.pathname.split('?')[0];
+      console.error(req.method, route, e);
       if (!res.headersSent) json(res, 500, { error: 'server error' });
     }
   });

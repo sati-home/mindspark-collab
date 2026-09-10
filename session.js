@@ -31,7 +31,7 @@ export const FORGES = {
 const hostOf = instance => { if (!instance) return 'github.com'; try { return new URL(instance).host; } catch { return 'unparseable'; } };
 const errCode = err => String((err && (err.code || err.name)) || 'unknown');
 
-export function createSession({ secret, allowedInstances = [], fetchImpl = fetch, ttlSec = 12 * 60 * 60 }) {
+export function createSession({ secret, allowedInstances = [], fetchImpl = fetch, ttlSec = 12 * 60 * 60, timeoutMs = 10_000 }) {
   const allowed = new Set(allowedInstances.map(strip));
   return async function session(body) {
     if (!secret) return { status: 501, body: { error: 'identity not configured' } };
@@ -58,7 +58,8 @@ export function createSession({ secret, allowedInstances = [], fetchImpl = fetch
 
     let user;
     try {
-      const r = await fetchImpl(forge.userUrl(instance), { headers: forge.headers(token) });
+      // A hung forge must not hold a request slot forever: give it timeoutMs, then 502.
+      const r = await fetchImpl(forge.userUrl(instance), { headers: forge.headers(token), signal: AbortSignal.timeout(timeoutMs) });
       if (!r.ok) return { status: 401, body: { error: 'invalid token' } };
       user = await r.json();
     } catch (err) {

@@ -327,3 +327,44 @@ describe('limits and identity mode', () => {
     assert.notEqual((await post('10.0.0.2')).status, 429, 'a different client has its own bucket');
   });
 });
+
+// Hardening from the review: response headers the meta-CSP cannot carry,
+// symlinks that would escape PUBLIC_DIR, and error logs without room ids.
+describe('hardening', () => {
+  const started = [];
+  after(() => started.forEach(s => { s.srv.closeAllConnections?.(); s.srv.close(); s.storage.close(); }));
+
+  test('every response carries clickjacking, sniffing and referrer protection', async () => {
+    const s = await start(); started.push(s);
+    for (const path of ['/', '/app.js', '/healthz', '/api/collab/']) {
+      const h = (await fetch(s.base + path)).headers;
+      assert.equal(h.get('x-frame-options'), 'DENY', path);
+      assert.equal(h.get('x-content-type-options'), 'nosniff', path);
+      assert.equal(h.get('referrer-policy'), 'no-referrer', path);
+      assert.equal(h.get('cross-origin-opener-policy'), 'same-origin', path);
+    }
+    const html = await fetch(s.base + '/');
+    assert.match(html.headers.get('content-security-policy') || '', /frame-ancestors 'none'/, 'the header CSP carries what the meta tag cannot');
+  });
+
+  test('a symlink under PUBLIC_DIR pointing outside is not served', async () => {
+    const s = await start(); started.push(s);
+    const { symlinkSync } = await import('node:fs');
+    symlinkSync(join(s.dir, 'secret.txt'), join(s.dir, 'public', 'leak.txt'));
+    assert.equal((await fetch(s.base + '/leak.txt')).status, 404);
+    assert.equal((await fetch(s.base + '/app.js')).status, 200, 'regular files still served');
+  });
+
+  test('a handler failure is logged without the request URL (room ids are capabilities)', async () => {
+    const s = await start(); started.push(s);
+    const lines = []; const orig = console.error; console.error = (...a) => lines.push(a.map(String).join(' '));
+    try {
+      s.srv.rooms.join = () => { throw new Error('boom'); };   // not reachable via HTTP; use the collab route with a poisoned storage instead
+      s.storage.room = () => ({ get: async () => { throw new Error('boom'); }, put: async () => {} });
+      assert.equal((await fetch(s.base + '/api/collab/secret-room-id-42')).status, 500);
+    } finally { console.error = orig; }
+    assert.equal(lines.length, 1);
+    assert.doesNotMatch(lines[0], /secret-room-id-42/);
+    assert.match(lines[0], /collab/);
+  });
+});
