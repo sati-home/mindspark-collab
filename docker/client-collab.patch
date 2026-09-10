@@ -1,5 +1,5 @@
 diff --git a/public/app.js b/public/app.js
-index 8b459ba..bac9dcd 100644
+index 8b459ba..f4b0d3b 100644
 --- a/public/app.js
 +++ b/public/app.js
 @@ -804,7 +804,13 @@ function isComposingKey(e){ return !!e && (e.isComposing || e.keyCode===229); }
@@ -37,7 +37,7 @@ index 8b459ba..bac9dcd 100644
      }
      else if(a==='history') showVersionHistory();
      else if(a==='present') startPresentation();
-@@ -13166,22 +13172,33 @@ function showUserPill(){
+@@ -13166,32 +13172,56 @@ function showUserPill(){
  //               and does the code->token exchange). See /worker.
  // ============================================================
  const GH_OAUTH = { clientId: 'Ov23liCukvrI3Zs9p3Px', workerUrl: 'https://mindspark-oauth.githubpage.workers.dev/' };
@@ -82,18 +82,30 @@ index 8b459ba..bac9dcd 100644
  }
  
  // Shared success path for BOTH login methods (PAT and OAuth).
-@@ -13192,6 +13209,10 @@ async function completeCloudLogin(token, forgeId, instance){
+ // A cloud-backed #shared= link opened while signed out is parked here, then opened
+ // in-place once sign-in completes (Overleaf-style: shared links require an account).
+ let _pendingSharedLink = null;
++// Ask the collab backend for a verified identity once a forge session exists,
++// so access control is available on a fresh login AND on a restored one. A
++// backend that cannot answer is not fatal - the controls just stay hidden -
++// and a backend that hangs must not stall boot, hence the timeout.
++async function ensureCollabIdentity(){
++  if(!collabAvailable()) return;
++  try{ await Promise.race([Session.ensure(), new Promise(r=>setTimeout(r, 8000))]); }catch(e){}
++}
++
+ async function completeCloudLogin(token, forgeId, instance){
    await CloudStore.login(token, forgeId, instance);
    const ov=$('#loginOverlay'); if(ov) ov.style.display='none';
    showUserPill();
 +  // Ask the collab backend for an identity now, so accessControlAvailable() has
 +  // an answer before the first menu opens. Failure is not fatal - it just means
 +  // the access-control UI stays hidden for this session.
-+  if(collabAvailable()){ try{ await Session.ensure(); }catch(e){} }
++  await ensureCollabIdentity();
    await proceedBoot();
    if(_pendingSharedLink){
      const s=_pendingSharedLink; _pendingSharedLink=null;
-@@ -13685,7 +13706,7 @@ const Collab = (function(){
+@@ -13685,7 +13715,7 @@ const Collab = (function(){
    const clone = o => JSON.parse(JSON.stringify(o));
    const snap  = () => ({ nodes:clone(map.nodes), rootId:map.rootId, title:map.title, color:map.color,
                           links:clone(map.links||[]), layout:map.layout, vars:clone(map.vars||{}), style:map.style });
@@ -102,7 +114,7 @@ index 8b459ba..bac9dcd 100644
      return (u.protocol==='https:'?'wss:':'ws:')+'//'+u.host+'/api/collab/'+encodeURIComponent(r); }catch(e){ return null; } }
  
    function ensureUI(){
-@@ -13893,12 +13914,13 @@ function leaveLiveForSwitch(){
+@@ -13893,12 +13923,13 @@ function leaveLiveForSwitch(){
  
  // ---- Cloud-hosted shared map (async, persists in the Durable Object) ----
  function sharedApiUrl(id){
@@ -120,7 +132,7 @@ index 8b459ba..bac9dcd 100644
  const Session = {
    jwt:null, exp:0, id:null, login:null, _pending:null, _off:false,
    async ensure(){
-@@ -13908,8 +13930,9 @@ const Session = {
+@@ -13908,8 +13939,9 @@ const Session = {
      this._pending=(async()=>{
        try{
          if(typeof CloudStore==='undefined' || !CloudStore.token) return null;
@@ -132,7 +144,25 @@ index 8b459ba..bac9dcd 100644
          if(r.status===501){ this._off=true; return null; }
          if(!r.ok) return null;
          const d=await r.json(); this.jwt=d.token; this.exp=d.exp||0; this.id=d.id||null; this.login=d.login||null;
-@@ -14047,12 +14070,30 @@ async function accessApi(roomId, sub, opts){
+@@ -14014,7 +14046,7 @@ async function publishSharedMap(){
+   if(!named && !confirm(
+       'Publish an edit link for this map?\n\n'
+     + 'Anyone who gets the link will be able to edit it, and it can\u2019t be restricted '
+-    + 'to named collaborators - that needs a GitHub sign-in.\n\n'
++    + 'to named collaborators - that needs a verified sign-in.\n\n'
+     + 'The link stays editable until you remove the map from "Shared by me".')) return;
+   if(!map._editToken) map._editToken = 'e'+Math.random().toString(36).slice(2,10)+Math.random().toString(36).slice(2,6);
+   let room = map._shareRoom || map.id;
+@@ -14036,7 +14068,7 @@ async function publishSharedMap(){
+     if(named){ try{ await accessApi(room, 'link', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ access:'edit-auth' }) }); }catch(e){} }
+     rememberSharedByMe({ id: map.id, room, token: map._editToken, title: map.title, color: map.color });
+     if(typeof scheduleSave==='function' && !map._cloudEdit) scheduleSave();   // persist the token in the owner repo so re-publishing reuses it
+-    toast(named ? 'Edit link copied - collaborators sign in with GitHub to open it.'
++    toast(named ? 'Edit link copied - collaborators sign in with '+forgeName()+' to open it.'
+                 : 'Edit link copied - anyone with this link can edit.');
+   }catch(e){ toast('Could not publish: '+(e.message||e)); }
+ }
+@@ -14047,12 +14079,30 @@ async function accessApi(roomId, sub, opts){
    try{ const r=await _collabFetch(base+(sub?('/'+sub):''), opts||{}); let d={}; try{ d=await r.json(); }catch(e){} return { status:r.status, ok:r.ok, d }; }
    catch(e){ return { status:0, ok:false, d:{} }; }
  }
@@ -167,7 +197,7 @@ index 8b459ba..bac9dcd 100644
    }catch(e){ return null; }
  }
  function _accessRoomId(){ return (map && (map._cloudView || map._shareRoom || map.id)) || null; }
-@@ -14133,8 +14174,8 @@ function _renderAccessPanel(roomId, data){
+@@ -14133,8 +14183,8 @@ function _renderAccessPanel(roomId, data){
    ov.querySelector('.am-addbtn').onclick=async()=>{
      const login=ov.querySelector('.am-user').value; const role=ov.querySelector('.am-newrole').value;
      if(!login.trim()) return;
@@ -178,3 +208,12 @@ index 8b459ba..bac9dcd 100644
      const res=await accessApi(roomId,'acl',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userId:u.id, login:u.login, role})});
      if(res&&res.ok){ toast('Added @'+u.login); openAccessPanel(roomId); }
      else toast(res&&res.status===400?'That user is already the owner':'Couldn\u2019t add collaborator');
+@@ -14546,7 +14596,7 @@ _syncLookFx();
+   const _openSharedAfterBoot=async()=>{ if(_sh) await openSharedInPlace(decodeURIComponent(_sh[1]), _sh[2]?decodeURIComponent(_sh[2]):null); };
+   const {mode, loggedIn} = await initStore();
+   if(mode==='cloud'){
+-    if(loggedIn){ showUserPill(); await proceedBoot(); await _openSharedAfterBoot(); }
++    if(loggedIn){ showUserPill(); await ensureCollabIdentity(); await proceedBoot(); await _openSharedAfterBoot(); }
+     else if(_sh){ _pendingSharedLink={ id:decodeURIComponent(_sh[1]), token:_sh[2]?decodeURIComponent(_sh[2]):null }; showLoginOverlay({ shared:true }); }   // shared link -> require sign-in first
+     else { showLoginOverlay(); }
+   } else {
