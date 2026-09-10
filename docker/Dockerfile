@@ -15,6 +15,7 @@ COPY package.json server.js app.js session.js rooms.js storage.js ws.js ./
 COPY --from=upstream /src/public ./upstream/public
 COPY --from=upstream /src/worker/auth-core.js /src/worker/collab-http.js ./upstream/
 ENV NODE_ENV=production PORT=3000 DATA_DIR=/app/data
+RUN mkdir -p /app/data && chown -R node:node /app
 VOLUME ["/app/data"]
 EXPOSE 3000
 USER node
