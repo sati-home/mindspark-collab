@@ -1,0 +1,28 @@
+# docker/compose.yml - run next to your forge. Build context is the repo root.
+services:
+  mindspark-collab:
+    image: mindspark-collab
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        MINDSPARK_REF: ${MINDSPARK_REF:-4e81dc6}
+    container_name: mindspark-collab
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - collab-data:/app/data
+    # Example for traefik on an external "proxy" network - adjust host and resolver.
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mindspark.rule=Host(`${COLLAB_HOST}`)"
+      - "traefik.http.routers.mindspark.entrypoints=https"
+      - "traefik.http.routers.mindspark.tls=true"
+      - "traefik.http.routers.mindspark.tls.certresolver=ionos"
+      - "traefik.http.services.mindspark.loadbalancer.server.port=3000"
+    networks: [proxy]
+volumes:
+  collab-data:
+networks:
+  proxy:
+    external: true
