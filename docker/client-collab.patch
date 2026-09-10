@@ -1,5 +1,5 @@
 diff --git a/public/app.js b/public/app.js
-index 8b459ba..e35dc3c 100644
+index 8b459ba..a4b4e8a 100644
 --- a/public/app.js
 +++ b/public/app.js
 @@ -801,11 +801,27 @@ function execCmd(cmd, value){
@@ -122,16 +122,32 @@ index 8b459ba..e35dc3c 100644
    await proceedBoot();
    if(_pendingSharedLink){
      const s=_pendingSharedLink; _pendingSharedLink=null;
-@@ -13685,7 +13725,7 @@ const Collab = (function(){
+@@ -13685,8 +13725,12 @@ const Collab = (function(){
    const clone = o => JSON.parse(JSON.stringify(o));
    const snap  = () => ({ nodes:clone(map.nodes), rootId:map.rootId, title:map.title, color:map.color,
                           links:clone(map.links||[]), layout:map.layout, vars:clone(map.vars||{}), style:map.style });
 -  function wsUrl(r){ try{ const u=new URL(GH_OAUTH.workerUrl);
+-    return (u.protocol==='https:'?'wss:':'ws:')+'//'+u.host+'/api/collab/'+encodeURIComponent(r); }catch(e){ return null; } }
++  // The identity rides on the upgrade URL: a room that has an access list is
++  // gated on the socket exactly like the HTTP API (read to join, write to
++  // change anything). No identity = anonymous, which open rooms still accept.
 +  function wsUrl(r){ try{ const u=new URL(COLLAB.url);
-     return (u.protocol==='https:'?'wss:':'ws:')+'//'+u.host+'/api/collab/'+encodeURIComponent(r); }catch(e){ return null; } }
++    const tok=(typeof Session!=='undefined' && Session.jwt) ? '?token='+encodeURIComponent(Session.jwt) : '';
++    return (u.protocol==='https:'?'wss:':'ws:')+'//'+u.host+'/api/collab/'+encodeURIComponent(r)+tok; }catch(e){ return null; } }
  
    function ensureUI(){
-@@ -13893,12 +13933,13 @@ function leaveLiveForSwitch(){
+     if(!layer){ layer=document.createElement('div'); layer.id='collabCursors'; document.body.appendChild(layer); }
+@@ -13721,7 +13765,8 @@ const Collab = (function(){
+   }
+   function join(roomId){ joiner=true; firstSnap=true; connect(roomId, false); }
+ 
+-  function connect(roomId, asHost){
++  async function connect(roomId, asHost){
++    await ensureCollabIdentity();   // so wsUrl() can carry the identity; a no-op when nobody is signed in
+     const url=wsUrl(roomId); if(!url){ toast('Live editing isn\u2019t configured'); return; }
+     room=roomId;
+     try{ ws=new WebSocket(url); }catch(e){ toast('Could not start live session'); return; }
+@@ -13893,12 +13938,13 @@ function leaveLiveForSwitch(){
  
  // ---- Cloud-hosted shared map (async, persists in the Durable Object) ----
  function sharedApiUrl(id){
@@ -149,7 +165,7 @@ index 8b459ba..e35dc3c 100644
  const Session = {
    jwt:null, exp:0, id:null, login:null, _pending:null, _off:false,
    async ensure(){
-@@ -13908,8 +13949,9 @@ const Session = {
+@@ -13908,8 +13954,9 @@ const Session = {
      this._pending=(async()=>{
        try{
          if(typeof CloudStore==='undefined' || !CloudStore.token) return null;
@@ -161,7 +177,7 @@ index 8b459ba..e35dc3c 100644
          if(r.status===501){ this._off=true; return null; }
          if(!r.ok) return null;
          const d=await r.json(); this.jwt=d.token; this.exp=d.exp||0; this.id=d.id||null; this.login=d.login||null;
-@@ -14014,7 +14056,7 @@ async function publishSharedMap(){
+@@ -14014,7 +14061,7 @@ async function publishSharedMap(){
    if(!named && !confirm(
        'Publish an edit link for this map?\n\n'
      + 'Anyone who gets the link will be able to edit it, and it can\u2019t be restricted '
@@ -170,7 +186,7 @@ index 8b459ba..e35dc3c 100644
      + 'The link stays editable until you remove the map from "Shared by me".')) return;
    if(!map._editToken) map._editToken = 'e'+Math.random().toString(36).slice(2,10)+Math.random().toString(36).slice(2,6);
    let room = map._shareRoom || map.id;
-@@ -14036,7 +14078,7 @@ async function publishSharedMap(){
+@@ -14036,7 +14083,7 @@ async function publishSharedMap(){
      if(named){ try{ await accessApi(room, 'link', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ access:'edit-auth' }) }); }catch(e){} }
      rememberSharedByMe({ id: map.id, room, token: map._editToken, title: map.title, color: map.color });
      if(typeof scheduleSave==='function' && !map._cloudEdit) scheduleSave();   // persist the token in the owner repo so re-publishing reuses it
@@ -179,7 +195,7 @@ index 8b459ba..e35dc3c 100644
                  : 'Edit link copied - anyone with this link can edit.');
    }catch(e){ toast('Could not publish: '+(e.message||e)); }
  }
-@@ -14047,12 +14089,30 @@ async function accessApi(roomId, sub, opts){
+@@ -14047,12 +14094,30 @@ async function accessApi(roomId, sub, opts){
    try{ const r=await _collabFetch(base+(sub?('/'+sub):''), opts||{}); let d={}; try{ d=await r.json(); }catch(e){} return { status:r.status, ok:r.ok, d }; }
    catch(e){ return { status:0, ok:false, d:{} }; }
  }
@@ -214,7 +230,7 @@ index 8b459ba..e35dc3c 100644
    }catch(e){ return null; }
  }
  function _accessRoomId(){ return (map && (map._cloudView || map._shareRoom || map.id)) || null; }
-@@ -14133,8 +14193,8 @@ function _renderAccessPanel(roomId, data){
+@@ -14133,8 +14198,8 @@ function _renderAccessPanel(roomId, data){
    ov.querySelector('.am-addbtn').onclick=async()=>{
      const login=ov.querySelector('.am-user').value; const role=ov.querySelector('.am-newrole').value;
      if(!login.trim()) return;
@@ -225,7 +241,18 @@ index 8b459ba..e35dc3c 100644
      const res=await accessApi(roomId,'acl',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userId:u.id, login:u.login, role})});
      if(res&&res.ok){ toast('Added @'+u.login); openAccessPanel(roomId); }
      else toast(res&&res.status===400?'That user is already the owner':'Couldn\u2019t add collaborator');
-@@ -14537,6 +14597,7 @@ _syncLookFx();
+@@ -14368,6 +14433,10 @@ async function tryEnterLiveSession(){
+   sel=null; history=[]; hpos=-1;
+   const t=$('#mapTitle'); if(t) t.value=map.title;
+   render();
++  // A returning user may hold a saved forge session; restoring it (and asking
++  // the collab backend for an identity) is what lets them join rooms that
++  // have an access list. Nobody signed in = anonymous guest, as before.
++  if(COLLAB.url){ Store=CloudStore; MODE='cloud'; try{ await CloudStore.tryInit(); }catch(e){} await ensureCollabIdentity(); }
+   Collab.join(room);
+   return true;
+ }
+@@ -14537,6 +14606,7 @@ _syncLookFx();
    requestAnimationFrame(()=>{ try{ if(isUiScaleAuto()) applyUiScale(getUiScale()); }catch(e){} });
    // Read-only shared link? Decode and render a view-only map - no store, no
    // login, no account needed by the recipient.
@@ -233,7 +260,7 @@ index 8b459ba..e35dc3c 100644
    if(await tryEnterLiveSession()) return;
    if(await tryEnterSharedView()) return;
    // A #shared= link: if you're signed in, boot your app first (so "Your maps" + the
-@@ -14546,7 +14607,7 @@ _syncLookFx();
+@@ -14546,7 +14616,7 @@ _syncLookFx();
    const _openSharedAfterBoot=async()=>{ if(_sh) await openSharedInPlace(decodeURIComponent(_sh[1]), _sh[2]?decodeURIComponent(_sh[2]):null); };
    const {mode, loggedIn} = await initStore();
    if(mode==='cloud'){

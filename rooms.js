@@ -13,7 +13,11 @@ export function createRooms(storage) {
   const peers = (r, except) => [...r.sockets].filter(([w]) => w !== except).map(([, a]) => ({ id: a.id, color: a.color, name: a.name || '' }));
   const broadcast = (r, sender, data) => { const s = JSON.stringify(data); for (const [w] of r.sockets) { if (w === sender) continue; try { w.send(s); } catch {} } };
 
-  async function join(roomId, ws) {
+  // `canWrite` (optional) is asked before a socket may change shared state -
+  // storing a snapshot or relaying an op. Cursors, names and pings are not
+  // writes. Without it (or when it answers true) the room is open, as before.
+  async function join(roomId, ws, { canWrite } = {}) {
+    const mayWrite = async () => { try { return canWrite ? !!(await canWrite()) : true; } catch { return false; } };
     const r = room(roomId);
     const taken = new Set([...r.sockets.values()].map(a => a.color));
     const color = COLORS.find(c => !taken.has(c)) || COLORS[randomInt(COLORS.length)];
@@ -27,8 +31,9 @@ export function createRooms(storage) {
       try {
         let m; try { m = JSON.parse(text); } catch { return; }
         if (!m || typeof m !== 'object' || Array.isArray(m)) return;
-        if (m.t === 'snapshot') { if (m.map !== undefined) await store.put('snapshot', m.map); return; } // stored opaquely, not relayed
+        if (m.t === 'snapshot') { if (m.map !== undefined && (!canWrite || await mayWrite())) await store.put('snapshot', m.map); return; } // stored opaquely, not relayed
         if (m.t === 'name') { me.name = String(m.name || '').slice(0, 40); broadcast(r, ws, { t: 'name', id: me.id, name: me.name }); return; }
+        if (m.t === 'op' && canWrite && !(await mayWrite())) return;                      // a viewer's edits go nowhere (ungated rooms relay synchronously)
         m.from = me.id;                                                                   // tag, relay to the others
         broadcast(r, ws, m);
       } catch (err) { console.warn('rooms: message handler failed', err); }             // never let a bad frame or a storage failure crash the process

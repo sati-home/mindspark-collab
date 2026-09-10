@@ -35,3 +35,14 @@ test('the patch makes boot await the health probe before a live join', () => {
   const j = patch.indexOf('if(await tryEnterLiveSession()) return;');
   assert.ok(i !== -1 && j !== -1 && i < j, 'boot must await probeHealth() before tryEnterLiveSession()');
 });
+
+// The WebSocket carries the identity as ?token= on the upgrade, and a live
+// join first restores the session and asks for an identity - otherwise every
+// live guest is anonymous and rooms with an access list refuse them.
+test('the patch sends the identity on the live-session upgrade and restores it before joining', () => {
+  const patch = readFileSync('docker/client-collab.patch', 'utf8');
+  assert.match(patch, /\?token='\+encodeURIComponent\(Session\.jwt\)/, 'wsUrl must append ?token=<jwt> when signed in');
+  const live = patch.indexOf('async function tryEnterLiveSession');
+  assert.ok(live !== -1 && patch.indexOf('await ensureCollabIdentity()', live) !== -1, 'tryEnterLiveSession must await ensureCollabIdentity()');
+  assert.ok(patch.indexOf('await CloudStore.tryInit()', live) !== -1, 'tryEnterLiveSession must restore a saved session first');
+});

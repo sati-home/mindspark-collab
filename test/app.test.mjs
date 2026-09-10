@@ -194,3 +194,70 @@ describe('config', () => {
     assert.throws(() => configFromEnv({ AUTH_SECRET: 's', PORT: '70000' }), /PORT must be an integer between 1 and 65535/);
   });
 });
+
+// A room that has an access list is gated on the WebSocket too: the client
+// passes its identity as ?token=<jwt> on the upgrade, joins need `read`, and
+// snapshot/op frames need `write` - the same decisions the HTTP API makes.
+// Rooms without an ACL (live sessions of unpublished maps) stay open.
+describe('WebSocket identity gate', () => {
+  const started = [], socks = [];
+  after(() => { socks.forEach(c => { try { c.close(); } catch {} }); started.forEach(s => { s.srv.closeAllConnections?.(); s.srv.close(); s.storage.close(); }); });
+  const OWNER = 'gitlab:gitlab.example:5', VIEWER = 'gitlab:gitlab.example:6';
+  const ws = (s, room, jwt) => { const c = new WebSocket(s.base.replace('http', 'ws') + '/api/collab/' + room + (jwt ? '?token=' + encodeURIComponent(jwt) : '')); socks.push(c); return c; };
+  const open = c => new Promise((ok, no) => { const q = []; c.onmessage = e => q.push(JSON.parse(e.data)); c.onopen = () => ok({ c, q }); c.onerror = () => no(new Error('refused')); c.onclose = e => no(new Error('closed ' + e.code)); });
+  const until = async (q, pred) => { for (let i = 0; i < 100; i++) { const m = q.find(pred); if (m) return m; await new Promise(r => setTimeout(r, 10)); } return null; };
+  async function gated(linkAccess = 'none') {
+    const s = await start(); started.push(s);
+    await s.storage.room('g').put('acl', { ownerId: OWNER, ownerLogin: 'ada', members: { [VIEWER]: { role: 'viewer', login: 'bob' } }, linkAccess });
+    await s.storage.room('g').put('snapshot', { title: 'secret' });
+    return s;
+  }
+
+  test('anonymous upgrade to a room with linkAccess none is refused; the owner joins', async () => {
+    const s = await gated('none');
+    await assert.rejects(open(ws(s, 'g')), /refused|closed/, 'no identity, no link access');
+    const owner = await signJWT({ sub: OWNER, login: 'ada' }, SECRET, 600);
+    const a = await open(ws(s, 'g', owner));
+    const w = await until(a.q, m => m.t === 'welcome');
+    assert.deepEqual(w.snapshot, { title: 'secret' });
+    a.c.close();
+  });
+
+  test('a viewer joins but cannot store snapshots or relay ops; cursors still relay', async () => {
+    const s = await gated('none');
+    const owner = await signJWT({ sub: OWNER, login: 'ada' }, SECRET, 600);
+    const viewer = await signJWT({ sub: VIEWER, login: 'bob' }, SECRET, 600);
+    const a = await open(ws(s, 'g', owner)); await until(a.q, m => m.t === 'welcome');
+    const b = await open(ws(s, 'g', viewer)); await until(b.q, m => m.t === 'welcome');
+    b.c.send(JSON.stringify({ t: 'snapshot', map: { title: 'overwritten' } }));
+    b.c.send(JSON.stringify({ t: 'op', ops: [{ t: 'node', id: 'n1', n: {} }] }));
+    b.c.send(JSON.stringify({ t: 'cur', x: 1, y: 2 }));
+    const cur = await until(a.q, m => m.t === 'cur');
+    assert.ok(cur, 'a viewer may still show a cursor');
+    assert.equal(a.q.find(m => m.t === 'op'), undefined, 'a viewer\'s op must not reach the others');
+    await new Promise(r => setTimeout(r, 30));
+    assert.deepEqual(await s.storage.room('g').get('snapshot'), { title: 'secret' }, 'a viewer must not overwrite the snapshot');
+    a.c.send(JSON.stringify({ t: 'snapshot', map: { title: 'by owner' } }));
+    await new Promise(r => setTimeout(r, 30));
+    assert.deepEqual(await s.storage.room('g').get('snapshot'), { title: 'by owner' });
+    a.c.close(); b.c.close();
+  });
+
+  test('an anonymous link with edit access still works, and a bad token counts as anonymous', async () => {
+    const s = await gated('edit');
+    const a = await open(ws(s, 'g', 'not-a-jwt')); await until(a.q, m => m.t === 'welcome');
+    a.c.send(JSON.stringify({ t: 'snapshot', map: { title: 'anon edit' } }));
+    await new Promise(r => setTimeout(r, 30));
+    assert.deepEqual(await s.storage.room('g').get('snapshot'), { title: 'anon edit' });
+    a.c.close();
+  });
+
+  test('a room without an access list stays open to anonymous sockets', async () => {
+    const s = await start(); started.push(s);
+    const a = await open(ws(s, 'free')); await until(a.q, m => m.t === 'welcome');
+    a.c.send(JSON.stringify({ t: 'snapshot', map: { title: 'live' } }));
+    await new Promise(r => setTimeout(r, 30));
+    assert.deepEqual(await s.storage.room('free').get('snapshot'), { title: 'live' });
+    a.c.close();
+  });
+});

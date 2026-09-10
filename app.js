@@ -5,6 +5,7 @@ import http from 'node:http';
 import { readFileSync, statSync } from 'node:fs';
 import { resolve, join, sep, extname } from 'node:path';
 import { handleCollabHttp } from './upstream/collab-http.js';
+import { verifyJWT, authorizeRequest } from './upstream/auth-core.js';
 import { acceptUpgrade } from './ws.js';
 import { createRooms } from './rooms.js';
 
@@ -123,16 +124,42 @@ export function createApp({ publicDir, storage, session, authSecret, allowedInst
     }
   });
 
+  // The WebSocket carries no headers the client can set, so its identity
+  // travels as ?token=<jwt> on the upgrade URL - the same JWT /api/session
+  // minted. A room that has an access list is then gated exactly like the
+  // HTTP API: `read` to join, `write` to store a snapshot or relay an op. A
+  // room without one (a live session of an unpublished map) stays open, as
+  // upstream's contract has it. An unverifiable token simply means anonymous.
+  const refuse = (socket, status, text) => { socket.write(`HTTP/1.1 ${status} ${text}\r\nConnection: close\r\n\r\n`); socket.destroy(); };
+  async function wsIdentity(url) {
+    const token = url.searchParams.get('token');
+    if (!token || !authSecret) return null;
+    const p = await verifyJWT(token, authSecret);
+    return (p && p.sub != null) ? { sub: String(p.sub), login: p.login || '' } : null;
+  }
+  // Decide `need` for a room right now (the ACL may change mid-session, e.g. a
+  // revoke), so this re-reads storage on every call rather than caching.
+  async function wsAllowed(room, identity, need) {
+    const store = storage.room(room);
+    const acl = await store.get('acl');
+    if (!acl) return true;                                                    // no access list: open, per contract
+    const editToken = await store.get('editToken');
+    return authorizeRequest({ acl, editToken, identity, tokenHeader: '', need, allowClaim: false }).ok;
+  }
   server.on('upgrade', (req, socket, head) => {
     // Same unparseable-target hazard as above, and here there is no response
     // object yet: answer by hand on the raw socket and hang up.
-    let pathname;
-    try { pathname = new URL(req.url, 'http://x').pathname; }
-    catch { socket.write('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n'); return socket.destroy(); }
-    const room = roomOf(pathname);
-    if (!room) { socket.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n'); return socket.destroy(); }
-    const ws = acceptUpgrade(req, socket, head);
-    if (ws) rooms.join(room, ws).catch(() => ws.close(1011));
+    let url;
+    try { url = new URL(req.url, 'http://x'); }
+    catch { return refuse(socket, 400, 'Bad Request'); }
+    const room = roomOf(url.pathname);
+    if (!room) return refuse(socket, 404, 'Not Found');
+    (async () => {
+      const identity = await wsIdentity(url);
+      if (!(await wsAllowed(room, identity, 'read'))) return refuse(socket, 403, 'Forbidden');
+      const ws = acceptUpgrade(req, socket, head);
+      if (ws) await rooms.join(room, ws, { canWrite: () => wsAllowed(room, identity, 'write') });
+    })().catch(() => { try { socket.destroy(); } catch {} });
   });
   server.storage = storage; server.rooms = rooms;
   return server;

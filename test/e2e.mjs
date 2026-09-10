@@ -30,7 +30,9 @@ try {
   const jwt = await signJWT({ sub: 'gitlab:h:1', login: 'ada' }, SECRET, 600);
   const put = await fetch(base + '/api/collab/e2e', { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + jwt }, body: JSON.stringify({ title: 'from http', nodes: {} }) });
   assert.equal(put.status, 200);
-  const c = await open(ws + '/api/collab/e2e');
+  // The PUT above claimed the room for gitlab:h:1, so it now has an access list
+// with no link access: an anonymous socket is refused and the owner joins.
+const c = await open(ws + '/api/collab/e2e?token=' + encodeURIComponent(jwt));
   const wc = await until(c.q, m => m.t === 'welcome');
   assert.equal(wc.snapshot.title, 'from http');
   assert.equal(wc.peers.length, 2);
