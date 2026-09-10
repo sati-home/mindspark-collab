@@ -25,3 +25,13 @@ test('client patch applies cleanly to the pinned upstream ref', { skip: !existsS
   assert.ok(idx.includes("connect-src 'self'"),
     "upstream index.html no longer has connect-src 'self'; update the injection in app.js");
 });
+
+// A #live= guest joins before initStore() runs, so the collab URL must be
+// discovered by a shared probe that the boot sequence awaits first.
+test('the patch makes boot await the health probe before a live join', () => {
+  const patch = readFileSync('docker/client-collab.patch', 'utf8');
+  assert.match(patch, /^\+function probeHealth\(\)/m, 'probeHealth() missing from the patch');
+  const i = patch.indexOf('+  await probeHealth();');
+  const j = patch.indexOf('if(await tryEnterLiveSession()) return;');
+  assert.ok(i !== -1 && j !== -1 && i < j, 'boot must await probeHealth() before tryEnterLiveSession()');
+});
