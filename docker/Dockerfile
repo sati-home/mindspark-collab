@@ -15,6 +15,10 @@ COPY package.json server.js app.js session.js rooms.js storage.js ws.js ./
 COPY --from=upstream /src/public ./upstream/public
 COPY --from=upstream /src/worker/auth-core.js /src/worker/collab-http.js ./upstream/
 ENV NODE_ENV=production PORT=3000 DATA_DIR=/app/data
+# Zero runtime dependencies: nothing here ever runs npm, so drop it (and its
+# bundled packages, which are what image scanners flag in node:*-alpine), and
+# pick up Alpine's security updates published since the base image was built.
+RUN apk upgrade --no-cache && rm -rf /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /opt/yarn* /usr/local/bin/yarn /usr/local/bin/yarnpkg
 RUN mkdir -p /app/data && chown -R node:node /app
 VOLUME ["/app/data"]
 EXPOSE 3000

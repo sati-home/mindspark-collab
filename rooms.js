@@ -2,7 +2,7 @@
 // same as upstream's Durable Object: it broadcasts ops/cursors/presence between
 // sockets, stores one opaque latest snapshot so a late joiner can sync, and
 // never interprets the map itself.
-import { randomUUID } from 'node:crypto';
+import { randomUUID, randomInt } from 'node:crypto';
 
 const COLORS = ['#e0613a', '#3a6ea5', '#2e9e6b', '#9a5bb8', '#d0902e', '#c14d7a', '#1f8a8a', '#b8513a'];
 
@@ -16,7 +16,7 @@ export function createRooms(storage) {
   async function join(roomId, ws) {
     const r = room(roomId);
     const taken = new Set([...r.sockets.values()].map(a => a.color));
-    const color = COLORS.find(c => !taken.has(c)) || COLORS[Math.floor(Math.random() * COLORS.length)];
+    const color = COLORS.find(c => !taken.has(c)) || COLORS[randomInt(COLORS.length)];
     const me = { id: randomUUID().slice(0, 8), color, name: '' };
     r.sockets.set(ws, me);
     const store = storage.room(roomId);
