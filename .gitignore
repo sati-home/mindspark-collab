@@ -1,0 +1,4 @@
+upstream/
+data/
+node_modules/
+.env
