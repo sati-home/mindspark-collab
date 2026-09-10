@@ -46,11 +46,21 @@ describe('session endpoint', () => {
     assert.equal(net.calls[0].headers['User-Agent'], 'mindspark-collab', 'GitHub rejects requests without a User-Agent');
   });
 
-  test('an instance outside the allowlist is refused before any request is made', async () => {
+  test('an instance outside the allowlist is refused before any request is made, and the refusal is logged', async () => {
     const net = forgeNet([]);
-    const r = await mk(net)({ forge: 'gitlab', instance: 'https://evil.example', token: 'x' });
+    const warnings = [];
+    const orig = console.warn;
+    console.warn = (...a) => warnings.push(a.join(' '));
+    let r;
+    try { r = await mk(net)({ forge: 'gitlab', instance: 'https://evil.example', token: 'x' }); }
+    finally { console.warn = orig; }
     assert.equal(r.status, 403);
     assert.equal(net.calls.length, 0, 'the endpoint must not be an open proxy');
+    assert.equal(warnings.length, 1, 'an operator must be able to see why a sign-in was refused');
+    assert.match(warnings[0], /gitlab/);
+    assert.match(warnings[0], /evil\.example/);
+    assert.match(warnings[0], /403/);
+    assert.doesNotMatch(warnings[0], /\bx\b/, 'never log the token');
   });
 
   test('a rejected token is 401, an unreachable forge 502, a missing token 400, an unknown forge 400', async () => {
@@ -60,6 +70,10 @@ describe('session endpoint', () => {
     assert.equal((await down({ forge: 'gitlab', instance: 'https://gitlab.example', token: 'x' })).status, 502);
     assert.equal((await mk(net)({ forge: 'gitlab', instance: 'https://gitlab.example' })).status, 400);
     assert.equal((await mk(net)({ forge: 'svn', token: 'x' })).status, 400);
+    const proto = await mk(net)({ forge: '__proto__', token: 'x' });
+    assert.equal(proto.status, 400, 'inherited keys are not forges');
+    assert.equal(proto.body.error, 'unknown forge');
+    assert.equal((await mk(net)({ forge: 'constructor', token: 'x' })).status, 400);
   });
 
   test('without a secret the endpoint answers 501, which the client treats as "identity off"', async () => {
