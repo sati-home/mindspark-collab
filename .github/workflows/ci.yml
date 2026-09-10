@@ -2,6 +2,8 @@
 # public repo shows its own status. Security scanning on GitHub is handled by
 # CodeQL default setup and secret scanning (repository settings), not here.
 name: ci
+permissions:
+  contents: read
 on:
   push:
     branches: [main]
@@ -13,8 +15,8 @@ jobs:
       matrix:
         node: [22, 24]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ matrix.node }}
       - run: npm run fetch-upstream -- "$(cat .upstream-ref)" --patch
@@ -23,6 +25,6 @@ jobs:
   image:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - run: docker build -f docker/Dockerfile --build-arg MINDSPARK_REF="$(cat .upstream-ref)" -t mindspark-collab:ci .
       - run: docker run --rm -e AUTH_SECRET=ci mindspark-collab:ci node --disable-warning=ExperimentalWarning -e "import('/app/server.js').then(()=>console.log('boots'))"

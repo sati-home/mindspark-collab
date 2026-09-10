@@ -81,16 +81,18 @@ describe('session endpoint', () => {
     const r = await createSession({ secret: '', allowedInstances: [], fetchImpl: net.fetchImpl })({ token: 'x' });
     assert.equal(r.status, 501);
   });
-});
 
-describe('session endpoint: forge timeout', () => {
   test('a forge that never answers is reported as 502 after the timeout, not held forever', async () => {
     // Without an abort signal this fetch never settles - which is exactly what a
     // hung forge looks like, and what the timeout must cut short.
     const fetchImpl = (url, opts = {}) => new Promise((_, reject) => { if (opts.signal) opts.signal.addEventListener('abort', () => reject(opts.signal.reason)); });
     const s = createSession({ secret: SECRET, allowedInstances: ['https://gitlab.example'], fetchImpl, timeoutMs: 50 });
+    // AbortSignal.timeout's timer is unref'd, so with nothing else pending the
+    // test runner would see an idle loop and cancel the test before it fires
+    // (Node 22 does exactly that). A real fetch holds a socket; here a timer.
+    const keepAlive = setTimeout(() => {}, 5000);
     const t0 = Date.now();
-    const r = await s({ forge: 'gitlab', instance: 'https://gitlab.example', token: 'x' });
+    let r; try { r = await s({ forge: 'gitlab', instance: 'https://gitlab.example', token: 'x' }); } finally { clearTimeout(keepAlive); }
     assert.equal(r.status, 502);
     assert.ok(Date.now() - t0 < 1000, 'gave up quickly');
   });

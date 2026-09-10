@@ -3,7 +3,8 @@
 #   sast /    - GitLab's built-in Semgrep-based SAST and secret detection
 #   secrets     (templates are included in the Free tier)
 #   trivy     - filesystem/config scan of the repo and an image scan of the
-#               built container (needs a runner with the Docker socket)
+#               built container (needs a runner with the Docker socket);
+#               both fail the pipeline on HIGH/CRITICAL since the image is clean
 stages: [test, scan]
 
 include:
@@ -34,18 +35,16 @@ secret_detection:
 trivy-fs:
   stage: scan
   image:
-    name: aquasec/trivy:latest
+    name: aquasec/trivy:0.74.0
     entrypoint: [""]
   script:
     - trivy fs --scanners vuln,misconfig,secret --exit-code 1 --severity HIGH,CRITICAL --skip-dirs upstream .
-  allow_failure: true
 
 trivy-image:
   stage: scan
-  image: docker:cli
+  image: docker:28-cli
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
   script:
     - docker build -f docker/Dockerfile --build-arg MINDSPARK_REF="$(cat .upstream-ref)" -t mindspark-collab:ci .
-    - docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --severity HIGH,CRITICAL mindspark-collab:ci
-  allow_failure: true
+    - docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.74.0 image --exit-code 1 --severity HIGH,CRITICAL mindspark-collab:ci

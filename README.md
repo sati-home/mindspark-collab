@@ -38,6 +38,8 @@ podman build -f docker/Dockerfile -t mindspark-collab .
 podman run -d -p 3000:3000 --env-file docker/.env -v collab-data:/app/data mindspark-collab
 ```
 
+The image carries a `HEALTHCHECK` on `/healthz`; Podman keeps it only when building with `--format docker` (OCI images have no such field).
+
 Without a container: `npm run fetch-upstream -- $(cat .upstream-ref) --patch`, then `AUTH_SECRET=… ALLOWED_INSTANCES=https://gitlab.example.com npm start`.
 
 | Variable | Default | Meaning |
