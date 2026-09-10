@@ -1,0 +1,83 @@
+diff --git a/public/app.js b/public/app.js
+index 8b459ba..39c675a 100644
+--- a/public/app.js
++++ b/public/app.js
+@@ -804,7 +804,13 @@ function isComposingKey(e){ return !!e && (e.isComposing || e.keyCode===229); }
+ async function initStore(){
+   try{
+     const r=await fetch('/healthz', {cache:'no-store'});
+-    if(r.ok){ Store=ServerStore; MODE='server'; return {mode:'server', loggedIn:true}; }
++    if(r.ok){
++      // A collaboration companion serving this app answers {"mode":"collab"}:
++      // storage stays in the user's forge, collaboration lives on this origin.
++      let j=null; try{ j=await r.clone().json(); }catch(e){}
++      if(j && j.mode==='collab'){ COLLAB.url=location.origin; }
++      else { Store=ServerStore; MODE='server'; return {mode:'server', loggedIn:true}; }
++    }
+   }catch(e){}
+   Store=CloudStore; MODE='cloud';
+   const loggedIn=await CloudStore.tryInit();
+@@ -13166,6 +13172,11 @@ function showUserPill(){
+ //               and does the code->token exchange). See /worker.
+ // ============================================================
+ const GH_OAUTH = { clientId: 'Ov23liCukvrI3Zs9p3Px', workerUrl: 'https://mindspark-oauth.githubpage.workers.dev/' };
++// Collaboration backend (shared maps, live sessions, identity). Independent of
++// GitHub OAuth: any deployment that runs a collab backend - the upstream worker
++// or a self-hosted companion answering /healthz with {"mode":"collab"} - sets
++// this. An empty url hides every collaboration feature.
++const COLLAB = { url: GH_OAUTH.workerUrl };
+ function oauthConfigured(){
+   if(/(^|\.)github\.io$/.test(location.hostname)) return false;
+   return !!(GH_OAUTH.clientId && GH_OAUTH.workerUrl);
+@@ -13173,15 +13184,14 @@ function oauthConfigured(){
+ // Live collaboration & cloud share rely on the Cloudflare worker, whose CORS/origin
+ // is bound to the deployed app - they can't work from local (server-mode) hosting
+ // or from static GitHub Pages (PAT-only).
+-function collabAvailable(){ return MODE==='cloud' && oauthConfigured(); }
+-// Named collaborators and link permissions need a VERIFIED identity, and the
+-// worker mints one only from a GitHub token (/api/session calls api.github.com).
+-// A Gitea/Forgejo session therefore reaches the collab DO anonymously, where
+-// every owner-only route answers 401 - which the UI used to surface as "Sign in
+-// to manage access" to a user who was already signed in. Hidden beats broken.
++function collabAvailable(){ return MODE==='cloud' && !!COLLAB.url; }
++// Named collaborators and link permissions need a VERIFIED identity, minted
++// for every forge by the collab backend's session endpoint (/api/session).
++// A backend that cannot mint one (no AUTH_SECRET configured) answers 501 and
++// Session switches itself off, so the UI falls back to legacy capability links.
+ function accessControlAvailable(){
+   return collabAvailable() && typeof CloudStore!=='undefined'
+-      && !!CloudStore.forge && CloudStore.forge.id==='github';
++      && !!CloudStore.forge;
+ }
+ 
+ // Shared success path for BOTH login methods (PAT and OAuth).
+@@ -13685,7 +13695,7 @@ const Collab = (function(){
+   const clone = o => JSON.parse(JSON.stringify(o));
+   const snap  = () => ({ nodes:clone(map.nodes), rootId:map.rootId, title:map.title, color:map.color,
+                          links:clone(map.links||[]), layout:map.layout, vars:clone(map.vars||{}), style:map.style });
+-  function wsUrl(r){ try{ const u=new URL(GH_OAUTH.workerUrl);
++  function wsUrl(r){ try{ const u=new URL(COLLAB.url);
+     return (u.protocol==='https:'?'wss:':'ws:')+'//'+u.host+'/api/collab/'+encodeURIComponent(r); }catch(e){ return null; } }
+ 
+   function ensureUI(){
+@@ -13893,7 +13903,7 @@ function leaveLiveForSwitch(){
+ 
+ // ---- Cloud-hosted shared map (async, persists in the Durable Object) ----
+ function sharedApiUrl(id){
+-  try{ const u=new URL(GH_OAUTH.workerUrl); return u.origin+'/api/collab/'+encodeURIComponent(id); }
++  try{ const u=new URL(COLLAB.url); return u.origin+'/api/collab/'+encodeURIComponent(id); }
+   catch(e){ return null; }
+ }
+ // ---- Session identity: a short-lived signed JWT proving the GitHub identity, sent
+@@ -13908,8 +13918,9 @@ const Session = {
+     this._pending=(async()=>{
+       try{
+         if(typeof CloudStore==='undefined' || !CloudStore.token) return null;
+-        const base=(GH_OAUTH.workerUrl||'').replace(/\/+$/,''); if(!base) return null;
+-        const r=await fetch(base+'/api/session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:CloudStore.token})});
++        const base=(COLLAB.url||'').replace(/\/+$/,''); if(!base) return null;
++        const r=await fetch(base+'/api/session',{method:'POST',headers:{'Content-Type':'application/json'},
++          body:JSON.stringify({token:CloudStore.token, forge:CloudStore.forge.id, instance:CloudStore.instance||undefined})});
+         if(r.status===501){ this._off=true; return null; }
+         if(!r.ok) return null;
+         const d=await r.json(); this.jwt=d.token; this.exp=d.exp||0; this.id=d.id||null; this.login=d.login||null;

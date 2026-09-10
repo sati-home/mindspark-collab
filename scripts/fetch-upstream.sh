@@ -22,7 +22,11 @@ sed "s#'../worker/auth-core.js'#'../../upstream/auth-core.js'#" \
 
 if [ -n "$PATCH" ]; then
   git -C upstream/src apply --check "$PWD/docker/client-collab.patch"
-  (cd upstream/src && git apply "$PWD/docker/client-collab.patch")
+  git -C upstream/src apply "$PWD/docker/client-collab.patch"
   rm -rf upstream/public && cp -R upstream/src/public upstream/public
+  # Restore the scratch checkout to pristine so it stays an unpatched tree
+  # the patch can be re-applied (and checked) against, e.g. by
+  # test/client-patch.test.mjs.
+  git -C upstream/src checkout -- .
   echo "upstream: client patch applied"
 fi
