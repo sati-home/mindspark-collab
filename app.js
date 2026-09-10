@@ -21,7 +21,10 @@ const SECURITY_HEADERS = {
   'X-Frame-Options': 'DENY',
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'no-referrer',
-  'Cross-Origin-Opener-Policy': 'same-origin',
+  // allow-popups, not same-origin: the PKCE sign-in opens a popup that goes to
+  // the forge and comes back to oauth-callback.html, which posts the code to
+  // window.opener. A strict COOP severs that link and the login never finishes.
+  'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
 };
 const HTML_HEADERS = { ...SECURITY_HEADERS, 'Content-Security-Policy': "frame-ancestors 'none'" };
 

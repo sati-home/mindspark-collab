@@ -341,7 +341,7 @@ describe('hardening', () => {
       assert.equal(h.get('x-frame-options'), 'DENY', path);
       assert.equal(h.get('x-content-type-options'), 'nosniff', path);
       assert.equal(h.get('referrer-policy'), 'no-referrer', path);
-      assert.equal(h.get('cross-origin-opener-policy'), 'same-origin', path);
+      assert.equal(h.get('cross-origin-opener-policy'), 'same-origin-allow-popups', path + ' (a strict same-origin COOP breaks the OAuth popup)');
     }
     const html = await fetch(s.base + '/');
     assert.match(html.headers.get('content-security-policy') || '', /frame-ancestors 'none'/, 'the header CSP carries what the meta tag cannot');
