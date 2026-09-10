@@ -1,0 +1,244 @@
+diff --git a/public/app.js b/public/app.js
+index 8b459ba..e35dc3c 100644
+--- a/public/app.js
++++ b/public/app.js
+@@ -801,11 +801,27 @@ function execCmd(cmd, value){
+ // catch up on 'compositionend' - see startEdit().
+ function isComposingKey(e){ return !!e && (e.isComposing || e.keyCode===229); }
+ 
++// Cloud-vs-server detection, done ONCE and shared: a companion serving this
++// app answers /healthz with {"mode":"collab"} - storage stays in the user's
++// forge, collaboration lives on this origin - and that has to be known before
++// anything that needs COLLAB.url, which includes a #live= join that runs
++// before initStore(). Memoised so both callers see the same answer.
++let _healthProbe=null;
++function probeHealth(){
++  if(!_healthProbe) _healthProbe=(async()=>{
++    try{
++      const r=await fetch('/healthz', {cache:'no-store'});
++      if(!r.ok) return null;
++      let j=null; try{ j=await r.clone().json(); }catch(e){}
++      if(j && j.mode==='collab'){ COLLAB.url=location.origin; return 'collab'; }
++      return 'server';
++    }catch(e){ return null; }
++  })();
++  return _healthProbe;
++}
+ async function initStore(){
+-  try{
+-    const r=await fetch('/healthz', {cache:'no-store'});
+-    if(r.ok){ Store=ServerStore; MODE='server'; return {mode:'server', loggedIn:true}; }
+-  }catch(e){}
++  const h=await probeHealth();
++  if(h==='server'){ Store=ServerStore; MODE='server'; return {mode:'server', loggedIn:true}; }
+   Store=CloudStore; MODE='cloud';
+   const loggedIn=await CloudStore.tryInit();
+   return {mode:'cloud', loggedIn};
+@@ -6826,8 +6842,8 @@ function exportMenu(){
+   const _collabItems = collabAvailable() ? `
+     <button data-a="collab"><span class="ex-ic">👥</span><span><b>Collaborate live</b><i>Real-time editing - share an invite link</i></span></button>
+     <button data-a="cloudshare"><span class="ex-ic">☁</span><span><b>Cloud share (editable)</b><i>Publish + copy an edit link collaborators can save to</i></span></button>` : '';
+-  // Live collab is capability-based (the room id IS the access) and works on any
+-  // forge; only this one needs the identity the worker can't issue for Gitea.
++  // Live collab is capability-based (the room id IS the access) and needs no
++  // identity; only this one does, so it appears only once one has been minted.
+   const _accessItem = accessControlAvailable() ? `
+     <button data-a="manageaccess"><span class="ex-ic">🔐</span><span><b>Manage access</b><i>Named collaborators &amp; link permissions</i></span></button>` : '';
+   pop.innerHTML=`
+@@ -6869,7 +6885,7 @@ function exportMenu(){
+     if(a==='cloudshare'){ if(collabAvailable()) publishSharedMap(); else toast('Cloud share needs the hosted app'); }
+     if(a==='manageaccess'){
+       if(accessControlAvailable()) openAccessPanel();
+-      else toast(collabAvailable() ? 'Managing access needs a GitHub sign-in' : 'Managing access needs the hosted app');
++      else toast(collabAvailable() ? 'Managing access needs a verified sign-in' : 'Managing access needs the hosted app');
+     }
+     else if(a==='history') showVersionHistory();
+     else if(a==='present') startPresentation();
+@@ -13166,32 +13182,56 @@ function showUserPill(){
+ //               and does the code->token exchange). See /worker.
+ // ============================================================
+ const GH_OAUTH = { clientId: 'Ov23liCukvrI3Zs9p3Px', workerUrl: 'https://mindspark-oauth.githubpage.workers.dev/' };
++// Collaboration backend (shared maps, live sessions, identity). Independent of
++// GitHub OAuth: any deployment that runs a collab backend - the upstream worker
++// or a self-hosted companion answering /healthz with {"mode":"collab"} - sets
++// this. An empty url hides every collaboration feature. On *.github.io the url
++// is blank for the same reason oauthConfigured() is false there: the worker's
++// CORS is bound to the deployed app.
++const COLLAB = { url: /(^|\.)github\.io$/.test(location.hostname) ? '' : GH_OAUTH.workerUrl };
+ function oauthConfigured(){
+   if(/(^|\.)github\.io$/.test(location.hostname)) return false;
+   return !!(GH_OAUTH.clientId && GH_OAUTH.workerUrl);
+ }
+-// Live collaboration & cloud share rely on the Cloudflare worker, whose CORS/origin
+-// is bound to the deployed app - they can't work from local (server-mode) hosting
+-// or from static GitHub Pages (PAT-only).
+-function collabAvailable(){ return MODE==='cloud' && oauthConfigured(); }
+-// Named collaborators and link permissions need a VERIFIED identity, and the
+-// worker mints one only from a GitHub token (/api/session calls api.github.com).
+-// A Gitea/Forgejo session therefore reaches the collab DO anonymously, where
+-// every owner-only route answers 401 - which the UI used to surface as "Sign in
+-// to manage access" to a user who was already signed in. Hidden beats broken.
++// Collaboration needs a backend that speaks the collab contract - the upstream
++// worker, or a self-hosted companion that serves this app and answers /healthz
++// with {"mode":"collab"}. It stays hidden on static GitHub Pages, where no such
++// backend can be bound.
++function collabAvailable(){ return MODE==='cloud' && !!COLLAB.url; }
++// Named collaborators and link permissions need a VERIFIED identity. It comes
++// from the collab backend's session endpoint (/api/session), for whichever
++// forge is signed in - so the test is whether that backend actually minted one,
++// not which forge we are on. A backend with no AUTH_SECRET answers 501, and one
++// that will not vouch for this instance (not in its allowlist) answers 403; in
++// both cases Session.id stays null and these controls stay hidden rather than
++// offering buttons whose every owner-only route would answer 401. Hidden beats
++// broken. Boot mints the identity right after login, so this is answerable by
++// the time any menu opens.
+ function accessControlAvailable(){
+-  return collabAvailable() && typeof CloudStore!=='undefined'
+-      && !!CloudStore.forge && CloudStore.forge.id==='github';
++  return collabAvailable() && !!Session.id;
+ }
+ 
+ // Shared success path for BOTH login methods (PAT and OAuth).
+ // A cloud-backed #shared= link opened while signed out is parked here, then opened
+ // in-place once sign-in completes (Overleaf-style: shared links require an account).
+ let _pendingSharedLink = null;
++// Ask the collab backend for a verified identity once a forge session exists,
++// so access control is available on a fresh login AND on a restored one. A
++// backend that cannot answer is not fatal - the controls just stay hidden -
++// and a backend that hangs must not stall boot, hence the timeout.
++async function ensureCollabIdentity(){
++  if(!collabAvailable()) return;
++  try{ await Promise.race([Session.ensure(), new Promise(r=>setTimeout(r, 8000))]); }catch(e){}
++}
++
+ async function completeCloudLogin(token, forgeId, instance){
+   await CloudStore.login(token, forgeId, instance);
+   const ov=$('#loginOverlay'); if(ov) ov.style.display='none';
+   showUserPill();
++  // Ask the collab backend for an identity now, so accessControlAvailable() has
++  // an answer before the first menu opens. Failure is not fatal - it just means
++  // the access-control UI stays hidden for this session.
++  await ensureCollabIdentity();
+   await proceedBoot();
+   if(_pendingSharedLink){
+     const s=_pendingSharedLink; _pendingSharedLink=null;
+@@ -13685,7 +13725,7 @@ const Collab = (function(){
+   const clone = o => JSON.parse(JSON.stringify(o));
+   const snap  = () => ({ nodes:clone(map.nodes), rootId:map.rootId, title:map.title, color:map.color,
+                          links:clone(map.links||[]), layout:map.layout, vars:clone(map.vars||{}), style:map.style });
+-  function wsUrl(r){ try{ const u=new URL(GH_OAUTH.workerUrl);
++  function wsUrl(r){ try{ const u=new URL(COLLAB.url);
+     return (u.protocol==='https:'?'wss:':'ws:')+'//'+u.host+'/api/collab/'+encodeURIComponent(r); }catch(e){ return null; } }
+ 
+   function ensureUI(){
+@@ -13893,12 +13933,13 @@ function leaveLiveForSwitch(){
+ 
+ // ---- Cloud-hosted shared map (async, persists in the Durable Object) ----
+ function sharedApiUrl(id){
+-  try{ const u=new URL(GH_OAUTH.workerUrl); return u.origin+'/api/collab/'+encodeURIComponent(id); }
++  try{ const u=new URL(COLLAB.url); return u.origin+'/api/collab/'+encodeURIComponent(id); }
+   catch(e){ return null; }
+ }
+-// ---- Session identity: a short-lived signed JWT proving the GitHub identity, sent
+-// as a Bearer to the collab worker so it can enforce per-map ACLs. If the worker has
+-// no AUTH_SECRET configured it returns 501 and we fall back to legacy capability links.
++// ---- Session identity: a short-lived signed JWT proving the forge identity
++// (GitHub, Gitea/Forgejo or GitLab), sent as a Bearer to the collab worker so
++// it can enforce per-map ACLs. If the worker has no AUTH_SECRET configured it
++// returns 501 and we fall back to legacy capability links.
+ const Session = {
+   jwt:null, exp:0, id:null, login:null, _pending:null, _off:false,
+   async ensure(){
+@@ -13908,8 +13949,9 @@ const Session = {
+     this._pending=(async()=>{
+       try{
+         if(typeof CloudStore==='undefined' || !CloudStore.token) return null;
+-        const base=(GH_OAUTH.workerUrl||'').replace(/\/+$/,''); if(!base) return null;
+-        const r=await fetch(base+'/api/session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:CloudStore.token})});
++        const base=(COLLAB.url||'').replace(/\/+$/,''); if(!base) return null;
++        const r=await fetch(base+'/api/session',{method:'POST',headers:{'Content-Type':'application/json'},
++          body:JSON.stringify({token:CloudStore.token, forge:CloudStore.forge.id, instance:CloudStore.instance||undefined})});
+         if(r.status===501){ this._off=true; return null; }
+         if(!r.ok) return null;
+         const d=await r.json(); this.jwt=d.token; this.exp=d.exp||0; this.id=d.id||null; this.login=d.login||null;
+@@ -14014,7 +14056,7 @@ async function publishSharedMap(){
+   if(!named && !confirm(
+       'Publish an edit link for this map?\n\n'
+     + 'Anyone who gets the link will be able to edit it, and it can\u2019t be restricted '
+-    + 'to named collaborators - that needs a GitHub sign-in.\n\n'
++    + 'to named collaborators - that needs a verified sign-in.\n\n'
+     + 'The link stays editable until you remove the map from "Shared by me".')) return;
+   if(!map._editToken) map._editToken = 'e'+Math.random().toString(36).slice(2,10)+Math.random().toString(36).slice(2,6);
+   let room = map._shareRoom || map.id;
+@@ -14036,7 +14078,7 @@ async function publishSharedMap(){
+     if(named){ try{ await accessApi(room, 'link', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ access:'edit-auth' }) }); }catch(e){} }
+     rememberSharedByMe({ id: map.id, room, token: map._editToken, title: map.title, color: map.color });
+     if(typeof scheduleSave==='function' && !map._cloudEdit) scheduleSave();   // persist the token in the owner repo so re-publishing reuses it
+-    toast(named ? 'Edit link copied - collaborators sign in with GitHub to open it.'
++    toast(named ? 'Edit link copied - collaborators sign in with '+forgeName()+' to open it.'
+                 : 'Edit link copied - anyone with this link can edit.');
+   }catch(e){ toast('Could not publish: '+(e.message||e)); }
+ }
+@@ -14047,12 +14089,30 @@ async function accessApi(roomId, sub, opts){
+   try{ const r=await _collabFetch(base+(sub?('/'+sub):''), opts||{}); let d={}; try{ d=await r.json(); }catch(e){} return { status:r.status, ok:r.ok, d }; }
+   catch(e){ return { status:0, ok:false, d:{} }; }
+ }
+-async function _resolveGitHubUser(login){
++// Resolve a typed login on the forge THIS session is signed in to, and return
++// the subject the collab backend mints for that person: <forge>:<host>:<id>.
++// The bare numeric id would never match a member - GitHub user 1 and GitLab
++// user 1 are different people, which is exactly why the backend namespaces it.
++// Same _api()/_headers() helpers as every other forge call, so a self-hosted
++// instance and its auth scheme come along for free.
++async function _resolveForgeUser(login){
+   login=String(login||'').trim().replace(/^@/,''); if(!login) return null;
++  if(typeof CloudStore==='undefined' || !CloudStore.forge) return null;
++  const fid=CloudStore.forge.id;
++  let host='github.com';
++  if(fid!=='github'){ try{ host=new URL(CloudStore.instance).host; }catch(e){ return null; } }
++  // GitLab has no /users/<login> route: it looks a username up by query and
++  // answers a (possibly empty) list. GitHub and Gitea answer the user directly.
++  const path = fid==='gitlab' ? '/users?username='+encodeURIComponent(login)
++                              : '/users/'+encodeURIComponent(login);
+   try{
+-    const h=(typeof CloudStore!=='undefined'&&CloudStore.token)?{Authorization:'token '+CloudStore.token,Accept:'application/vnd.github+json'}:{Accept:'application/vnd.github+json'};
+-    const r=await fetch('https://api.github.com/users/'+encodeURIComponent(login),{headers:h});
+-    if(!r.ok) return null; const u=await r.json(); return (u&&u.id!=null)?{ id:String(u.id), login:u.login }:null;
++    const r=await fetch(CloudStore._api(path),
++      {headers: CloudStore.token ? CloudStore._headers() : {Accept:'application/json'}});
++    if(!r.ok) return null;
++    let u=await r.json();
++    if(fid==='gitlab') u=Array.isArray(u)?u[0]:null;
++    if(!u || u.id==null) return null;
++    return { id: fid+':'+host+':'+String(u.id), login: u.login || u.username || login };
+   }catch(e){ return null; }
+ }
+ function _accessRoomId(){ return (map && (map._cloudView || map._shareRoom || map.id)) || null; }
+@@ -14133,8 +14193,8 @@ function _renderAccessPanel(roomId, data){
+   ov.querySelector('.am-addbtn').onclick=async()=>{
+     const login=ov.querySelector('.am-user').value; const role=ov.querySelector('.am-newrole').value;
+     if(!login.trim()) return;
+-    const u=await _resolveGitHubUser(login);
+-    if(!u){ toast('No such GitHub user'); return; }
++    const u=await _resolveForgeUser(login);
++    if(!u){ toast('No such user on '+forgeName()); return; }
+     const res=await accessApi(roomId,'acl',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userId:u.id, login:u.login, role})});
+     if(res&&res.ok){ toast('Added @'+u.login); openAccessPanel(roomId); }
+     else toast(res&&res.status===400?'That user is already the owner':'Couldn\u2019t add collaborator');
+@@ -14537,6 +14597,7 @@ _syncLookFx();
+   requestAnimationFrame(()=>{ try{ if(isUiScaleAuto()) applyUiScale(getUiScale()); }catch(e){} });
+   // Read-only shared link? Decode and render a view-only map - no store, no
+   // login, no account needed by the recipient.
++  await probeHealth();   // a #live= guest needs COLLAB.url before initStore() would set it
+   if(await tryEnterLiveSession()) return;
+   if(await tryEnterSharedView()) return;
+   // A #shared= link: if you're signed in, boot your app first (so "Your maps" + the
+@@ -14546,7 +14607,7 @@ _syncLookFx();
+   const _openSharedAfterBoot=async()=>{ if(_sh) await openSharedInPlace(decodeURIComponent(_sh[1]), _sh[2]?decodeURIComponent(_sh[2]):null); };
+   const {mode, loggedIn} = await initStore();
+   if(mode==='cloud'){
+-    if(loggedIn){ showUserPill(); await proceedBoot(); await _openSharedAfterBoot(); }
++    if(loggedIn){ showUserPill(); await ensureCollabIdentity(); await proceedBoot(); await _openSharedAfterBoot(); }
+     else if(_sh){ _pendingSharedLink={ id:decodeURIComponent(_sh[1]), token:_sh[2]?decodeURIComponent(_sh[2]):null }; showLoginOverlay({ shared:true }); }   // shared link -> require sign-in first
+     else { showLoginOverlay(); }
+   } else {
