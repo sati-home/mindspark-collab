@@ -45,7 +45,7 @@ const raw = (base, text) => new Promise((ok, fail) => {
 
 describe('app', () => {
   const started = [];
-  after(() => started.forEach(s => { s.srv.close(); s.storage.close(); }));
+  after(() => started.forEach(s => { s.srv.close(); s.storage.close(); rmSync(s.dir, { recursive: true, force: true }); }));
 
   test('health says collab; static app is served with the allowed instances injected into connect-src', async () => {
     const s = await start(); started.push(s);
@@ -83,6 +83,20 @@ describe('app', () => {
     assert.deepEqual(get.body, { title: 'M', nodes: {} });
     assert.equal((await fetch(s.base + '/api/collab/room1', { headers: { Authorization: 'Bearer ' + other } })).status, 403, 'linkAccess none');
     assert.equal((await fetch(s.base + '/api/collab/')).status, 400, 'room required');
+  });
+
+  test('HTTP PATCH {ops} merges into the stored snapshot', async () => {
+    const s = await start(); started.push(s);
+    const owner = await signJWT({ sub: 'gitlab:gitlab.example:5', login: 'ada' }, SECRET, 3600);
+    const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + owner };
+    const put = await j(await fetch(s.base + '/api/collab/patchroom', { method: 'PUT', headers: auth, body: JSON.stringify({ title: 'M', nodes: {} }) }));
+    assert.equal(put.status, 200);
+    const patch = await j(await fetch(s.base + '/api/collab/patchroom', { method: 'PATCH', headers: auth,
+      body: JSON.stringify({ ops: [{ t: 'node', id: 'n1', n: { text: 'x' } }] }) }));
+    assert.equal(patch.status, 200);
+    const get = await j(await fetch(s.base + '/api/collab/patchroom', { headers: auth }));
+    assert.deepEqual(get.body.nodes, { n1: { text: 'x' } });
+    assert.equal(get.body.title, 'M', 'a node op leaves the rest of the snapshot alone');
   });
 
   test('WebSocket on the room URL joins the relay and sees the stored snapshot', async () => {
@@ -160,7 +174,7 @@ describe('app', () => {
     const base = `http://127.0.0.1:${srv.address().port}`;
     const html = await (await fetch(base + '/')).text();
     assert.equal(html, '<p>no csp here</p>');
-    srv.close(); storage.close();
+    srv.close(); storage.close(); rmSync(dir, { recursive: true, force: true });
   });
 });
 

@@ -1,13 +1,16 @@
-import { test, describe } from 'node:test';
+import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openStorage } from '../storage.js';
 
-const tmpFile = () => join(mkdtempSync(join(tmpdir(), 'msc-')), 'collab.db');
+const dirs = [];
+const tmpFile = () => { const d = mkdtempSync(join(tmpdir(), 'msc-')); dirs.push(d); return join(d, 'collab.db'); };
 
 describe('storage', () => {
+  after(() => dirs.forEach(d => rmSync(d, { recursive: true, force: true })));
+
   test('get of a missing key is undefined, like Durable Object storage', async () => {
     const s = openStorage(tmpFile());
     assert.equal(await s.room('r1').get('acl'), undefined);
