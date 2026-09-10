@@ -17,4 +17,11 @@ test('client patch applies cleanly to the pinned upstream ref', { skip: !existsS
   assert.match(patch, /^diff --git a\/public\/app\.js b\/public\/app\.js/m);
   assert.equal((patch.match(/^diff --git/gm) || []).length, 1, 'only app.js');
   execSync('git apply --check ../../docker/client-collab.patch', { cwd: 'upstream/src', stdio: 'pipe' });
+
+  // app.js rewrites this exact directive at serve time to add ALLOWED_INSTANCES.
+  // If upstream ever restyles its CSP, the injection silently becomes a no-op and
+  // every self-hosted forge fails as an untraceable network error - fail here first.
+  const idx = readFileSync('upstream/src/public/index.html', 'utf8');
+  assert.ok(idx.includes("connect-src 'self'"),
+    "upstream index.html no longer has connect-src 'self'; update the injection in app.js");
 });
