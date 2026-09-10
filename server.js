@@ -19,7 +19,16 @@ export function configFromEnv(env = process.env) {
     allowedInstances: list(env.ALLOWED_INSTANCES),
     allowedOrigin: (env.ALLOWED_ORIGIN || '').replace(/\/+$/, ''),
     publicDir: env.PUBLIC_DIR || join(here, 'upstream', 'public'),
+    trustProxy: /^(1|true|yes)$/i.test(env.TRUST_PROXY || ''),
+    requireIdentity: /^(1|true|yes)$/i.test(env.REQUIRE_IDENTITY || ''),
+    limits: {
+      ...(env.RATE_PER_MIN ? { ratePerMin: Number(env.RATE_PER_MIN) } : {}),
+      ...(env.MAX_SOCKETS ? { maxSockets: Number(env.MAX_SOCKETS) } : {}),
+      ...(env.MAX_SOCKETS_PER_ROOM ? { maxSocketsPerRoom: Number(env.MAX_SOCKETS_PER_ROOM) } : {}),
+      ...(env.IDLE_TIMEOUT_MS ? { idleMs: Number(env.IDLE_TIMEOUT_MS) } : {}),
+    },
   };
+  for (const [k, v] of Object.entries(cfg.limits)) if (!Number.isFinite(v) || v <= 0) throw new Error(`limits: ${k} must be a positive number`);
   if (!cfg.authSecret) throw new Error('AUTH_SECRET is required (generate one: openssl rand -hex 32)');
   if (!Number.isInteger(port) || port <= 0 || port >= 65536) throw new Error('PORT must be an integer between 1 and 65535');
   for (const o of cfg.allowedInstances) { let u; try { u = new URL(o); } catch { throw new Error('ALLOWED_INSTANCES: not an origin: ' + o); } if (u.origin !== o) throw new Error('ALLOWED_INSTANCES: use bare origins: ' + o); }

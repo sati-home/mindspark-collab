@@ -126,7 +126,7 @@ describe('app', () => {
   });
 
   test('a request body over the cap is rejected with 413; just under the cap still works', async () => {
-    const s = await start({ maxBody: 1000 }); started.push(s);
+    const s = await start({ maxBody: 1000, maxCollabBody: 1000 }); started.push(s);
     const over = 'x'.repeat(1001);
     const overSession = await j(await fetch(s.base + '/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: over }));
     assert.equal(overSession.status, 413);
@@ -259,5 +259,71 @@ describe('WebSocket identity gate', () => {
     await new Promise(r => setTimeout(r, 30));
     assert.deepEqual(await s.storage.room('free').get('snapshot'), { title: 'live' });
     a.c.close();
+  });
+});
+
+// Limits wired into the server: a per-IP bucket on the costly routes, socket
+// caps, the idle reaper, a smaller body cap for the collab API, and the
+// optional REQUIRE_IDENTITY mode for deployments that never want anonymous
+// room creation.
+describe('limits and identity mode', () => {
+  const started = [], socks = [];
+  after(() => { socks.forEach(c => { try { c.close(); } catch {} }); started.forEach(s => { s.srv.closeAllConnections?.(); s.srv.close(); s.storage.close(); }); });
+  const ws = (s, room, jwt) => { const c = new WebSocket(s.base.replace('http', 'ws') + '/api/collab/' + room + (jwt ? '?token=' + encodeURIComponent(jwt) : '')); socks.push(c); return c; };
+  const open = c => new Promise((ok, no) => { c.onopen = () => ok(c); c.onerror = () => no(new Error('refused')); c.onclose = e => no(new Error('closed ' + e.code)); });
+
+  test('the session and collab-write routes are rate limited per client; reads and static files are not', async () => {
+    const s = await start({ limits: { ratePerMin: 60, burst: 2 } }); started.push(s);
+    const post = () => fetch(s.base + '/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    assert.notEqual((await post()).status, 429); assert.notEqual((await post()).status, 429);
+    const third = await post();
+    assert.equal(third.status, 429);
+    assert.equal(third.headers.get('retry-after'), '1');
+    assert.equal((await fetch(s.base + '/healthz')).status, 200, 'reads stay open');
+    assert.equal((await fetch(s.base + '/api/collab/r1')).status, 404, 'GET on a room is not metered');
+  });
+
+  test('a collab body over its own smaller cap is 413 while the session cap stays as configured', async () => {
+    const s = await start({ maxCollabBody: 500, maxBody: 5000 }); started.push(s);
+    const big = JSON.stringify({ title: 'x'.repeat(600) });
+    const r = await fetch(s.base + '/api/collab/r2', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: big });
+    assert.equal(r.status, 413);
+    const r2 = await fetch(s.base + '/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: 'x'.repeat(600) }) });
+    assert.notEqual(r2.status, 413);
+  });
+
+  test('socket caps: the third socket in a room is refused; total cap too', async () => {
+    const s = await start({ limits: { maxSockets: 3, maxSocketsPerRoom: 2 } }); started.push(s);
+    await open(ws(s, 'cap')); await open(ws(s, 'cap'));
+    await assert.rejects(open(ws(s, 'cap')), /refused|closed/, 'per-room cap');
+    await open(ws(s, 'other'));
+    await assert.rejects(open(ws(s, 'third')), /refused|closed/, 'total cap');
+  });
+
+  test('a silent socket is closed 1001 after idleMs', async () => {
+    const s = await start({ limits: { idleMs: 150, reapEveryMs: 50 } }); started.push(s);
+    const c = await open(ws(s, 'idle'));
+    const code = await new Promise(r => { c.onclose = e => r(e.code); });
+    assert.equal(code, 1001);
+  });
+
+  test('REQUIRE_IDENTITY: anonymous room writes and upgrades are refused, identified ones work', async () => {
+    const s = await start({ requireIdentity: true }); started.push(s);
+    const anon = await fetch(s.base + '/api/collab/req', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: '{"title":"m"}' });
+    assert.equal(anon.status, 401);
+    await assert.rejects(open(ws(s, 'req')), /refused|closed/);
+    const jwt = await signJWT({ sub: 'gitlab:gitlab.example:5', login: 'ada' }, SECRET, 600);
+    const ok = await fetch(s.base + '/api/collab/req', { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + jwt }, body: '{"title":"m"}' });
+    assert.equal(ok.status, 200);
+    await open(ws(s, 'req', jwt));
+    assert.equal((await fetch(s.base + '/api/collab/req', { headers: { Authorization: 'Bearer ' + jwt } })).status, 200);
+  });
+
+  test('behind a trusted proxy the bucket key is the forwarded client address', async () => {
+    const s = await start({ limits: { ratePerMin: 60, burst: 1 }, trustProxy: true }); started.push(s);
+    const post = ip => fetch(s.base + '/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': ip }, body: '{}' });
+    assert.notEqual((await post('10.0.0.1')).status, 429);
+    assert.equal((await post('10.0.0.1')).status, 429);
+    assert.notEqual((await post('10.0.0.2')).status, 429, 'a different client has its own bucket');
   });
 });

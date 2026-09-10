@@ -8,9 +8,10 @@ import { createHash } from 'node:crypto';
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 
 export class ServerSocket extends EventEmitter {
-  constructor(socket, maxFrame) {
+  constructor(socket, maxFrame, destroyAfterMs = 3000) {
     super();
     this.socket = socket; this.maxFrame = maxFrame; this.buf = Buffer.alloc(0); this.closed = false;
+    this.destroyAfterMs = destroyAfterMs;
     socket.on('data', d => this._onData(d));
     socket.on('close', () => this._finish(1006));
     socket.on('error', () => this._finish(1006));
@@ -23,9 +24,14 @@ export class ServerSocket extends EventEmitter {
     const b = Buffer.alloc(2); b.writeUInt16BE(wire);
     try { this.socket.write(frame(0x8, b)); } catch {}
     this.socket.end(); this._finish(wire);
+    // A peer that never answers the close would keep the TCP socket half-open
+    // (and its 'data' events flowing) indefinitely; give it a moment, then cut.
+    const t = setTimeout(() => { try { this.socket.destroy(); } catch {} }, this.destroyAfterMs);
+    if (t.unref) t.unref();
   }
-  _finish(code) { if (this.closed) return; this.closed = true; this.emit('close', code); }
+  _finish(code) { if (this.closed) return; this.closed = true; this.buf = Buffer.alloc(0); this.emit('close', code); }
   _onData(chunk) {
+    if (this.closed) return;                        // nothing after close is ever parsed - or buffered
     this.buf = Buffer.concat([this.buf, chunk]);
     for (;;) {
       if (this.closed) return;
@@ -59,7 +65,7 @@ function frame(op, payload) {
   return Buffer.concat([head, payload]);
 }
 
-export function acceptUpgrade(req, socket, head, { maxFrame = 1024 * 1024 } = {}) {
+export function acceptUpgrade(req, socket, head, { maxFrame = 1024 * 1024, destroyAfterMs = 3000 } = {}) {
   const key = req.headers['sec-websocket-key'];
   if (String(req.headers.upgrade || '').toLowerCase() !== 'websocket' || !key) {
     socket.write('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n'); socket.destroy();
@@ -68,7 +74,7 @@ export function acceptUpgrade(req, socket, head, { maxFrame = 1024 * 1024 } = {}
   const accept = createHash('sha1').update(key + GUID).digest('base64');
   socket.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n'
     + 'Sec-WebSocket-Accept: ' + accept + '\r\n\r\n');
-  const ws = new ServerSocket(socket, maxFrame);
+  const ws = new ServerSocket(socket, maxFrame, destroyAfterMs);
   if (head && head.length) ws._onData(head);
   return ws;
 }

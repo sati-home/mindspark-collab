@@ -19,7 +19,8 @@ browser ──▶ your forge: map JSON commits with your own token, exactly as w
 
 - **Maps stay in git.** The companion holds room state only - snapshots, access lists, presence. It never sees a repository token.
 - **Identity comes from your forge.** A user's forge token is verified once against `ALLOWED_INSTANCES` and turned into a 12-hour signed identity (`gitlab:<host>:<id>` and so on), which drives named collaborators, roles and revoke.
-- **Live sessions are relayed, not stored.** A room id is the capability to join a live session, as with the upstream worker; shared-map reads over HTTP are access-controlled.
+- **Live sessions are relayed, not stored.** A room that has an access list is gated on the WebSocket too: the app sends its identity on the upgrade, joining needs read access, storing a snapshot or relaying an edit needs write access. A room without an access list (a live session of an unpublished map) is open to anyone who has its id, as with the upstream worker; set `REQUIRE_IDENTITY=1` to close that as well.
+- **Limits.** Request bodies are capped (2 MiB on the collab API), sign-in and writes are rate limited per client, sockets are capped in total and per room, and silent sockets are reaped.
 
 ## Run
 
@@ -47,6 +48,11 @@ Without a container: `npm run fetch-upstream -- $(cat .upstream-ref) --patch`, t
 | `ALLOWED_INSTANCES` | *(empty)* | comma-separated origins of self-hosted forges the session endpoint may contact, e.g. `https://gitlab.example.com,https://codeberg.org` |
 | `ALLOWED_ORIGIN` | *(unset)* | CORS origin, only when the app is hosted on another origin |
 | `PUBLIC_DIR` | bundled app | serve a different MindSpark build |
+| `TRUST_PROXY` | unset | set to `1` behind a reverse proxy so rate limits key on the forwarded client address, not the proxy's |
+| `REQUIRE_IDENTITY` | unset | set to `1` to refuse anonymous room writes and live-session joins entirely (no anonymous room creation; legacy anonymous links stop working) |
+| `RATE_PER_MIN` | `60` | per-client budget for sign-in, room writes and socket upgrades (burst of 30) |
+| `MAX_SOCKETS`, `MAX_SOCKETS_PER_ROOM` | `500`, `32` | live-session socket caps |
+| `IDLE_TIMEOUT_MS` | `60000` | a socket silent for longer is closed (the app pings every 6 s) |
 
 `ALLOWED_INSTANCES` is also injected into the served app's Content-Security-Policy, so the browser may talk to those forges.
 

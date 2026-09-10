@@ -8,12 +8,17 @@ import { handleCollabHttp } from './upstream/collab-http.js';
 import { verifyJWT, authorizeRequest } from './upstream/auth-core.js';
 import { acceptUpgrade } from './ws.js';
 import { createRooms } from './rooms.js';
+import { createLimits } from './limits.js';
 
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8', '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8' };
 
 const MAX_BODY = 16 * 1024 * 1024;
+// Maps are small JSON documents (upstream's own GitHub path caps them at 1 MiB),
+// so the collab API gets a much smaller cap than the generic one.
+const MAX_COLLAB_BODY = 2 * 1024 * 1024;
+const REAP_EVERY_MS = 10_000;
 
 const roomOf = pathname => {
   const rest = pathname.startsWith('/api/collab/') ? pathname.slice('/api/collab/'.length) : null;
@@ -21,8 +26,20 @@ const roomOf = pathname => {
   try { return decodeURIComponent(rest.split('/')[0] || ''); } catch { return ''; }
 };
 
-export function createApp({ publicDir, storage, session, authSecret, allowedInstances = [], allowedOrigin = '', maxBody = MAX_BODY }) {
+export function createApp({ publicDir, storage, session, authSecret, allowedInstances = [], allowedOrigin = '',
+  maxBody = MAX_BODY, maxCollabBody = MAX_COLLAB_BODY, limits: limitOpts = {}, requireIdentity = false, trustProxy = false }) {
   const rooms = createRooms(storage);
+  const { reapEveryMs = REAP_EVERY_MS, ...limitCfg } = limitOpts;
+  const limits = createLimits(limitCfg);
+  const reaper = setInterval(limits.reap, reapEveryMs); if (reaper.unref) reaper.unref();
+  // The bucket key. Behind a reverse proxy every request arrives from the
+  // proxy's address, so TRUST_PROXY switches to the client it forwards for.
+  const clientKey = req => {
+    if (trustProxy) { const xff = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim(); if (xff) return xff; }
+    return req.socket.remoteAddress || 'unknown';
+  };
+  const tooMany = (res) => { res.writeHead(429, { ...cors, 'Retry-After': '1', 'Content-Type': 'application/json; charset=utf-8' }); res.end('{"error":"too many requests"}'); };
+  const bearer = req => { const m = String(req.headers.authorization || '').match(/^Bearer\s+(.+)$/i); return m ? m[1] : ''; };
   const root = resolve(publicDir);
   const env = { AUTH_SECRET: authSecret };
   const cors = allowedOrigin ? { 'Access-Control-Allow-Origin': allowedOrigin,
@@ -40,12 +57,12 @@ export function createApp({ publicDir, storage, session, authSecret, allowedInst
   // chunks are dropped (not buffered) and the promise rejects with a marked error, so
   // callers can answer 413 before any JSON parsing or auth work happens. The caller is
   // responsible for destroying the request once the 413 response has been sent.
-  const readBody = req => new Promise((ok, fail) => {
+  const readBody = (req, cap = maxBody) => new Promise((ok, fail) => {
     const c = []; let total = 0; let tooLarge = false;
     req.on('data', d => {
       if (tooLarge) return;
       total += d.length;
-      if (total > maxBody) {
+      if (total > cap) {
         tooLarge = true;
         const err = new Error('body too large'); err.code = 'BODY_TOO_LARGE';
         fail(err);
@@ -102,6 +119,7 @@ export function createApp({ publicDir, storage, session, authSecret, allowedInst
       if (url.pathname === '/healthz') return json(res, 200, { mode: 'collab' });
       if (url.pathname === '/api/session') {
         if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' });
+        if (!limits.allow(clientKey(req))) return tooMany(res);
         let raw; try { raw = await readBody(req); } catch (e) { if (e.code === 'BODY_TOO_LARGE') return json(res, 413, { error: 'body too large' }, req); throw e; }
         let body; try { body = JSON.parse(raw.toString('utf8') || '{}'); } catch { return json(res, 400, { error: 'bad json' }); }
         const r = await session(body); return json(res, r.status, r.body);
@@ -111,7 +129,13 @@ export function createApp({ publicDir, storage, session, authSecret, allowedInst
         if (!room) return json(res, 400, { error: 'room required' });
         let body;
         if (req.method === 'GET' || req.method === 'HEAD') body = undefined;
-        else { try { body = await readBody(req); } catch (e) { if (e.code === 'BODY_TOO_LARGE') return json(res, 413, { error: 'body too large' }, req); throw e; } }
+        else {
+          if (!limits.allow(clientKey(req))) return tooMany(res);
+          // REQUIRE_IDENTITY: no anonymous writes at all - which is what stops
+          // anonymous room creation - regardless of what a room's ACL says.
+          if (requireIdentity) { const p = await verifyJWT(bearer(req), authSecret); if (!p || p.sub == null) return json(res, 401, { error: 'sign in required' }); }
+          try { body = await readBody(req, maxCollabBody); } catch (e) { if (e.code === 'BODY_TOO_LARGE') return json(res, 413, { error: 'body too large' }, req); throw e; }
+        }
         const request = new Request('http://collab' + req.url, { method: req.method, headers: req.headers, body });
         const out = await handleCollabHttp(storage.room(room), env, request);
         return json(res, out.status, out.body);
@@ -154,13 +178,19 @@ export function createApp({ publicDir, storage, session, authSecret, allowedInst
     catch { return refuse(socket, 400, 'Bad Request'); }
     const room = roomOf(url.pathname);
     if (!room) return refuse(socket, 404, 'Not Found');
+    if (!limits.allow(clientKey(req))) return refuse(socket, 429, 'Too Many Requests');
     (async () => {
       const identity = await wsIdentity(url);
+      if (requireIdentity && !identity) return refuse(socket, 401, 'Unauthorized');
       if (!(await wsAllowed(room, identity, 'read'))) return refuse(socket, 403, 'Forbidden');
+      if (!limits.acquire(room)) return refuse(socket, 503, 'Service Unavailable');
       const ws = acceptUpgrade(req, socket, head);
-      if (ws) await rooms.join(room, ws, { canWrite: () => wsAllowed(room, identity, 'write') });
+      if (!ws) { limits.release(room); return; }
+      ws.on('close', () => limits.release(room));
+      limits.watch(ws);
+      await rooms.join(room, ws, { canWrite: () => wsAllowed(room, identity, 'write') });
     })().catch(() => { try { socket.destroy(); } catch {} });
   });
-  server.storage = storage; server.rooms = rooms;
+  server.storage = storage; server.rooms = rooms; server.limits = limits;
   return server;
 }

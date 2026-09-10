@@ -105,3 +105,21 @@ describe('ws', () => {
     assert.equal(result, null);
   });
 });
+
+describe('ws: after close', () => {
+  test('data arriving after close is not buffered and the socket is destroyed', async () => {
+    const { srv, url } = await echoServer();
+    let server;
+    srv.removeAllListeners('upgrade');
+    srv.on('upgrade', (req, socket, head) => { server = acceptUpgrade(req, socket, head, { destroyAfterMs: 50 }); });
+    const c = await open(url);
+    try {
+      await new Promise(r => setTimeout(r, 20));
+      server.close(1000);
+      for (let i = 0; i < 5; i++) { try { c.send('x'.repeat(1000)); } catch {} }
+      await new Promise(r => setTimeout(r, 120));
+      assert.equal(server.buf.length, 0, 'nothing buffered once closed');
+      assert.equal(server.socket.destroyed, true, 'the TCP socket is destroyed shortly after close');
+    } finally { try { c.close(); } catch {} srv.closeAllConnections?.(); srv.close(); }
+  });
+});
