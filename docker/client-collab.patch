@@ -1,8 +1,8 @@
 diff --git a/public/app.js b/public/app.js
-index f74041b..82a0120 100644
+index fd8ba6d..13148f2 100644
 --- a/public/app.js
 +++ b/public/app.js
-@@ -950,11 +950,27 @@ function execCmd(cmd, value){
+@@ -1045,11 +1045,27 @@ function execCmd(cmd, value){
  // catch up on 'compositionend' - see startEdit().
  function isComposingKey(e){ return !!e && (e.isComposing || e.keyCode===229); }
  
@@ -15,7 +15,7 @@ index f74041b..82a0120 100644
 +function probeHealth(){
 +  if(!_healthProbe) _healthProbe=(async()=>{
 +    try{
-+      const r=await fetch('/healthz', {cache:'no-store'});
++      const r=await fetch(appUrl('healthz'), {cache:'no-store'});
 +      if(!r.ok) return null;
 +      let j=null; try{ j=await r.clone().json(); }catch(e){}
 +      if(j && j.mode==='collab'){ COLLAB.url=location.origin; return 'collab'; }
@@ -26,7 +26,7 @@ index f74041b..82a0120 100644
 +}
  async function initStore(){
 -  try{
--    const r=await fetch('/healthz', {cache:'no-store'});
+-    const r=await fetch(appUrl('healthz'), {cache:'no-store'});
 -    if(r.ok){ Store=ServerStore; MODE='server'; return {mode:'server', loggedIn:true}; }
 -  }catch(e){}
 +  const h=await probeHealth();
@@ -34,7 +34,7 @@ index f74041b..82a0120 100644
    Store=CloudStore; MODE='cloud';
    const loggedIn=await CloudStore.tryInit();
    return {mode:'cloud', loggedIn};
-@@ -6982,8 +6998,8 @@ function exportMenu(){
+@@ -7125,8 +7141,8 @@ function exportMenu(){
    const _collabItems = collabAvailable() ? `
      <button data-a="collab"><span class="ex-ic">👥</span><span><b>Collaborate live</b><i>Real-time editing - share an invite link</i></span></button>
      <button data-a="cloudshare"><span class="ex-ic">☁</span><span><b>Cloud share (editable)</b><i>Publish + copy an edit link collaborators can save to</i></span></button>` : '';
@@ -45,7 +45,7 @@ index f74041b..82a0120 100644
    const _accessItem = accessControlAvailable() ? `
      <button data-a="manageaccess"><span class="ex-ic">🔐</span><span><b>Manage access</b><i>Named collaborators &amp; link permissions</i></span></button>` : '';
    pop.innerHTML=`
-@@ -7025,7 +7041,7 @@ function exportMenu(){
+@@ -7168,7 +7184,7 @@ function exportMenu(){
      if(a==='cloudshare'){ if(collabAvailable()) publishSharedMap(); else toast('Cloud share needs the hosted app'); }
      if(a==='manageaccess'){
        if(accessControlAvailable()) openAccessPanel();
@@ -54,10 +54,10 @@ index f74041b..82a0120 100644
      }
      else if(a==='history') showVersionHistory();
      else if(a==='present') startPresentation();
-@@ -13322,22 +13338,33 @@ function showUserPill(){
- //               and does the code->token exchange). See /worker.
- // ============================================================
- const GH_OAUTH = { clientId: 'Ov23liCukvrI3Zs9p3Px', workerUrl: 'https://mindspark-oauth.githubpage.workers.dev/' };
+@@ -13807,6 +13823,13 @@ const GH_OAUTH = {
+   workerUrl: 'https://mindspark-oauth.githubpage.workers.dev/',
+   appOrigin: 'https://mindspark.githubpage.workers.dev'
+ };
 +// Collaboration backend (shared maps, live sessions, identity). Independent of
 +// GitHub OAuth: any deployment that runs a collab backend - the upstream worker
 +// or a self-hosted companion answering /healthz with {"mode":"collab"} - sets
@@ -67,7 +67,10 @@ index f74041b..82a0120 100644
 +const COLLAB = { url: /(^|\.)github\.io$/.test(location.hostname) ? '' : GH_OAUTH.workerUrl };
  function oauthConfigured(){
    if(/(^|\.)github\.io$/.test(location.hostname)) return false;
-   return !!(GH_OAUTH.clientId && GH_OAUTH.workerUrl);
+   if(!(GH_OAUTH.clientId && GH_OAUTH.workerUrl && GH_OAUTH.appOrigin)) return false;
+@@ -13845,18 +13868,22 @@ function showOauthSilentFailure(){
+   a.textContent='github.com/settings/applications'; err.appendChild(a); err.appendChild(document.createTextNode('.'));
+   console.warn('OAuth popup closed without a result. GH_OAUTH.appOrigin and the worker\'s ALLOWED_ORIGIN must both be', location.origin);
  }
 -// Live collaboration & cloud share rely on the Cloudflare worker, whose CORS/origin
 -// is bound to the deployed app - they can't work from local (server-mode) hosting
@@ -99,7 +102,7 @@ index f74041b..82a0120 100644
  }
  
  // Shared success path for BOTH login methods (PAT and OAuth).
-@@ -13354,11 +13381,23 @@ function repoTargetFor(forgeId){
+@@ -13886,11 +13913,23 @@ function syncRepoDetails(el){
  function repoFieldFor(forgeId){
    return $({github:'#ghRepo', gitea:'#giteaRepo', gitlab:'#glRepo'}[forgeId] || '');
  }
@@ -112,8 +115,8 @@ index f74041b..82a0120 100644
 +  try{ await Promise.race([Session.ensure(), new Promise(r=>setTimeout(r, 8000))]); }catch(e){}
 +}
  
- async function completeCloudLogin(token, forgeId, instance){
-   await CloudStore.login(token, forgeId, instance, repoTargetFor(forgeId||DEFAULT_FORGE));
+ async function completeCloudLogin(token, forgeId, instance, refresh){
+   await CloudStore.login(token, forgeId, instance, repoTargetFor(forgeId||DEFAULT_FORGE), refresh);
    const ov=$('#loginOverlay'); if(ov) ov.style.display='none';
    showUserPill();
 +  // Ask the collab backend for an identity now, so accessControlAvailable() has
@@ -123,7 +126,7 @@ index f74041b..82a0120 100644
    await proceedBoot();
    if(_pendingSharedLink){
      const s=_pendingSharedLink; _pendingSharedLink=null;
-@@ -13862,8 +13901,12 @@ const Collab = (function(){
+@@ -14407,8 +14446,12 @@ const Collab = (function(){
    const clone = o => JSON.parse(JSON.stringify(o));
    const snap  = () => ({ nodes:clone(map.nodes), rootId:map.rootId, title:map.title, color:map.color,
                           links:clone(map.links||[]), layout:map.layout, vars:clone(map.vars||{}), style:map.style });
@@ -138,7 +141,7 @@ index f74041b..82a0120 100644
  
    function ensureUI(){
      if(!layer){ layer=document.createElement('div'); layer.id='collabCursors'; document.body.appendChild(layer); }
-@@ -13898,7 +13941,8 @@ const Collab = (function(){
+@@ -14443,7 +14486,8 @@ const Collab = (function(){
    }
    function join(roomId){ joiner=true; firstSnap=true; connect(roomId, false); }
  
@@ -148,7 +151,7 @@ index f74041b..82a0120 100644
      const url=wsUrl(roomId); if(!url){ toast('Live editing isn\u2019t configured'); return; }
      room=roomId;
      try{ ws=new WebSocket(url); }catch(e){ toast('Could not start live session'); return; }
-@@ -14070,12 +14114,13 @@ function leaveLiveForSwitch(){
+@@ -14616,12 +14660,13 @@ function leaveLiveForSwitch(){
  
  // ---- Cloud-hosted shared map (async, persists in the Durable Object) ----
  function sharedApiUrl(id){
@@ -166,7 +169,7 @@ index f74041b..82a0120 100644
  const Session = {
    jwt:null, exp:0, id:null, login:null, _pending:null, _off:false,
    async ensure(){
-@@ -14085,8 +14130,9 @@ const Session = {
+@@ -14631,8 +14676,9 @@ const Session = {
      this._pending=(async()=>{
        try{
          if(typeof CloudStore==='undefined' || !CloudStore.token) return null;
@@ -178,7 +181,7 @@ index f74041b..82a0120 100644
          if(r.status===501){ this._off=true; return null; }
          if(!r.ok) return null;
          const d=await r.json(); this.jwt=d.token; this.exp=d.exp||0; this.id=d.id||null; this.login=d.login||null;
-@@ -14191,7 +14237,7 @@ async function publishSharedMap(){
+@@ -14737,7 +14783,7 @@ async function publishSharedMap(){
    if(!named && !confirm(
        'Publish an edit link for this map?\n\n'
      + 'Anyone who gets the link will be able to edit it, and it can\u2019t be restricted '
@@ -187,8 +190,8 @@ index f74041b..82a0120 100644
      + 'The link stays editable until you remove the map from "Shared by me".')) return;
    if(!map._editToken) map._editToken = 'e'+Math.random().toString(36).slice(2,10)+Math.random().toString(36).slice(2,6);
    let room = map._shareRoom || map.id;
-@@ -14213,7 +14259,7 @@ async function publishSharedMap(){
-     if(named){ try{ await accessApi(room, 'link', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ access:'edit-auth' }) }); }catch(e){} }
+@@ -14759,7 +14805,7 @@ async function publishSharedMap(){
+     if(named){ try{ await accessApi(room, 'link', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ access:'edit-auth' }) }); }catch(e){} }
      rememberSharedByMe({ id: map.id, room, token: map._editToken, title: map.title, color: map.color });
      if(typeof scheduleSave==='function' && !map._cloudEdit) scheduleSave();   // persist the token in the owner repo so re-publishing reuses it
 -    toast(named ? 'Edit link copied - collaborators sign in with GitHub to open it.'
@@ -196,7 +199,7 @@ index f74041b..82a0120 100644
                  : 'Edit link copied - anyone with this link can edit.');
    }catch(e){ toast('Could not publish: '+(e.message||e)); }
  }
-@@ -14224,12 +14270,30 @@ async function accessApi(roomId, sub, opts){
+@@ -14770,12 +14816,30 @@ async function accessApi(roomId, sub, opts){
    try{ const r=await _collabFetch(base+(sub?('/'+sub):''), opts||{}); let d={}; try{ d=await r.json(); }catch(e){} return { status:r.status, ok:r.ok, d }; }
    catch(e){ return { status:0, ok:false, d:{} }; }
  }
@@ -231,7 +234,7 @@ index f74041b..82a0120 100644
    }catch(e){ return null; }
  }
  function _accessRoomId(){ return (map && (map._cloudView || map._shareRoom || map.id)) || null; }
-@@ -14310,8 +14374,8 @@ function _renderAccessPanel(roomId, data){
+@@ -14856,8 +14920,8 @@ function _renderAccessPanel(roomId, data){
    ov.querySelector('.am-addbtn').onclick=async()=>{
      const login=ov.querySelector('.am-user').value; const role=ov.querySelector('.am-newrole').value;
      if(!login.trim()) return;
@@ -242,7 +245,7 @@ index f74041b..82a0120 100644
      const res=await accessApi(roomId,'acl',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userId:u.id, login:u.login, role})});
      if(res&&res.ok){ toast('Added @'+u.login); openAccessPanel(roomId); }
      else toast(res&&res.status===400?'That user is already the owner':'Couldn\u2019t add collaborator');
-@@ -14545,6 +14609,10 @@ async function tryEnterLiveSession(){
+@@ -15092,6 +15156,10 @@ async function tryEnterLiveSession(){
    sel=null; history=[]; hpos=-1;
    const t=$('#mapTitle'); if(t) t.value=map.title;
    render();
@@ -253,7 +256,7 @@ index f74041b..82a0120 100644
    Collab.join(room);
    return true;
  }
-@@ -14714,6 +14782,7 @@ _syncLookFx();
+@@ -15241,6 +15309,7 @@ else loadQotd();
    requestAnimationFrame(()=>{ try{ if(isUiScaleAuto()) applyUiScale(getUiScale()); }catch(e){} });
    // Read-only shared link? Decode and render a view-only map - no store, no
    // login, no account needed by the recipient.
@@ -261,12 +264,12 @@ index f74041b..82a0120 100644
    if(await tryEnterLiveSession()) return;
    if(await tryEnterSharedView()) return;
    // A #shared= link: if you're signed in, boot your app first (so "Your maps" + the
-@@ -14723,7 +14792,7 @@ _syncLookFx();
+@@ -15250,7 +15319,7 @@ else loadQotd();
    const _openSharedAfterBoot=async()=>{ if(_sh) await openSharedInPlace(decodeURIComponent(_sh[1]), _sh[2]?decodeURIComponent(_sh[2]):null); };
    const {mode, loggedIn} = await initStore();
    if(mode==='cloud'){
 -    if(loggedIn){ showUserPill(); await proceedBoot(); await _openSharedAfterBoot(); }
 +    if(loggedIn){ showUserPill(); await ensureCollabIdentity(); await proceedBoot(); await _openSharedAfterBoot(); }
      else if(_sh){ _pendingSharedLink={ id:decodeURIComponent(_sh[1]), token:_sh[2]?decodeURIComponent(_sh[2]):null }; showLoginOverlay({ shared:true }); }   // shared link -> require sign-in first
-     else { showLoginOverlay(); }
+     else { showLoginOverlay(CloudStore.sessionExpired ? {expired:true} : undefined); }
    } else {
