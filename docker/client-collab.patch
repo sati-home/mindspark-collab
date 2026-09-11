@@ -1,8 +1,8 @@
 diff --git a/public/app.js b/public/app.js
-index 8b459ba..a4b4e8a 100644
+index f74041b..82a0120 100644
 --- a/public/app.js
 +++ b/public/app.js
-@@ -801,11 +801,27 @@ function execCmd(cmd, value){
+@@ -950,11 +950,27 @@ function execCmd(cmd, value){
  // catch up on 'compositionend' - see startEdit().
  function isComposingKey(e){ return !!e && (e.isComposing || e.keyCode===229); }
  
@@ -34,7 +34,7 @@ index 8b459ba..a4b4e8a 100644
    Store=CloudStore; MODE='cloud';
    const loggedIn=await CloudStore.tryInit();
    return {mode:'cloud', loggedIn};
-@@ -6826,8 +6842,8 @@ function exportMenu(){
+@@ -6982,8 +6998,8 @@ function exportMenu(){
    const _collabItems = collabAvailable() ? `
      <button data-a="collab"><span class="ex-ic">👥</span><span><b>Collaborate live</b><i>Real-time editing - share an invite link</i></span></button>
      <button data-a="cloudshare"><span class="ex-ic">☁</span><span><b>Cloud share (editable)</b><i>Publish + copy an edit link collaborators can save to</i></span></button>` : '';
@@ -45,7 +45,7 @@ index 8b459ba..a4b4e8a 100644
    const _accessItem = accessControlAvailable() ? `
      <button data-a="manageaccess"><span class="ex-ic">🔐</span><span><b>Manage access</b><i>Named collaborators &amp; link permissions</i></span></button>` : '';
    pop.innerHTML=`
-@@ -6869,7 +6885,7 @@ function exportMenu(){
+@@ -7025,7 +7041,7 @@ function exportMenu(){
      if(a==='cloudshare'){ if(collabAvailable()) publishSharedMap(); else toast('Cloud share needs the hosted app'); }
      if(a==='manageaccess'){
        if(accessControlAvailable()) openAccessPanel();
@@ -54,7 +54,7 @@ index 8b459ba..a4b4e8a 100644
      }
      else if(a==='history') showVersionHistory();
      else if(a==='present') startPresentation();
-@@ -13166,32 +13182,56 @@ function showUserPill(){
+@@ -13322,22 +13338,33 @@ function showUserPill(){
  //               and does the code->token exchange). See /worker.
  // ============================================================
  const GH_OAUTH = { clientId: 'Ov23liCukvrI3Zs9p3Px', workerUrl: 'https://mindspark-oauth.githubpage.workers.dev/' };
@@ -99,9 +99,10 @@ index 8b459ba..a4b4e8a 100644
  }
  
  // Shared success path for BOTH login methods (PAT and OAuth).
- // A cloud-backed #shared= link opened while signed out is parked here, then opened
- // in-place once sign-in completes (Overleaf-style: shared links require an account).
- let _pendingSharedLink = null;
+@@ -13354,11 +13381,23 @@ function repoTargetFor(forgeId){
+ function repoFieldFor(forgeId){
+   return $({github:'#ghRepo', gitea:'#giteaRepo', gitlab:'#glRepo'}[forgeId] || '');
+ }
 +// Ask the collab backend for a verified identity once a forge session exists,
 +// so access control is available on a fresh login AND on a restored one. A
 +// backend that cannot answer is not fatal - the controls just stay hidden -
@@ -110,9 +111,9 @@ index 8b459ba..a4b4e8a 100644
 +  if(!collabAvailable()) return;
 +  try{ await Promise.race([Session.ensure(), new Promise(r=>setTimeout(r, 8000))]); }catch(e){}
 +}
-+
+ 
  async function completeCloudLogin(token, forgeId, instance){
-   await CloudStore.login(token, forgeId, instance);
+   await CloudStore.login(token, forgeId, instance, repoTargetFor(forgeId||DEFAULT_FORGE));
    const ov=$('#loginOverlay'); if(ov) ov.style.display='none';
    showUserPill();
 +  // Ask the collab backend for an identity now, so accessControlAvailable() has
@@ -122,7 +123,7 @@ index 8b459ba..a4b4e8a 100644
    await proceedBoot();
    if(_pendingSharedLink){
      const s=_pendingSharedLink; _pendingSharedLink=null;
-@@ -13685,8 +13725,12 @@ const Collab = (function(){
+@@ -13862,8 +13901,12 @@ const Collab = (function(){
    const clone = o => JSON.parse(JSON.stringify(o));
    const snap  = () => ({ nodes:clone(map.nodes), rootId:map.rootId, title:map.title, color:map.color,
                           links:clone(map.links||[]), layout:map.layout, vars:clone(map.vars||{}), style:map.style });
@@ -137,7 +138,7 @@ index 8b459ba..a4b4e8a 100644
  
    function ensureUI(){
      if(!layer){ layer=document.createElement('div'); layer.id='collabCursors'; document.body.appendChild(layer); }
-@@ -13721,7 +13765,8 @@ const Collab = (function(){
+@@ -13898,7 +13941,8 @@ const Collab = (function(){
    }
    function join(roomId){ joiner=true; firstSnap=true; connect(roomId, false); }
  
@@ -147,7 +148,7 @@ index 8b459ba..a4b4e8a 100644
      const url=wsUrl(roomId); if(!url){ toast('Live editing isn\u2019t configured'); return; }
      room=roomId;
      try{ ws=new WebSocket(url); }catch(e){ toast('Could not start live session'); return; }
-@@ -13893,12 +13938,13 @@ function leaveLiveForSwitch(){
+@@ -14070,12 +14114,13 @@ function leaveLiveForSwitch(){
  
  // ---- Cloud-hosted shared map (async, persists in the Durable Object) ----
  function sharedApiUrl(id){
@@ -165,7 +166,7 @@ index 8b459ba..a4b4e8a 100644
  const Session = {
    jwt:null, exp:0, id:null, login:null, _pending:null, _off:false,
    async ensure(){
-@@ -13908,8 +13954,9 @@ const Session = {
+@@ -14085,8 +14130,9 @@ const Session = {
      this._pending=(async()=>{
        try{
          if(typeof CloudStore==='undefined' || !CloudStore.token) return null;
@@ -177,7 +178,7 @@ index 8b459ba..a4b4e8a 100644
          if(r.status===501){ this._off=true; return null; }
          if(!r.ok) return null;
          const d=await r.json(); this.jwt=d.token; this.exp=d.exp||0; this.id=d.id||null; this.login=d.login||null;
-@@ -14014,7 +14061,7 @@ async function publishSharedMap(){
+@@ -14191,7 +14237,7 @@ async function publishSharedMap(){
    if(!named && !confirm(
        'Publish an edit link for this map?\n\n'
      + 'Anyone who gets the link will be able to edit it, and it can\u2019t be restricted '
@@ -186,7 +187,7 @@ index 8b459ba..a4b4e8a 100644
      + 'The link stays editable until you remove the map from "Shared by me".')) return;
    if(!map._editToken) map._editToken = 'e'+Math.random().toString(36).slice(2,10)+Math.random().toString(36).slice(2,6);
    let room = map._shareRoom || map.id;
-@@ -14036,7 +14083,7 @@ async function publishSharedMap(){
+@@ -14213,7 +14259,7 @@ async function publishSharedMap(){
      if(named){ try{ await accessApi(room, 'link', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ access:'edit-auth' }) }); }catch(e){} }
      rememberSharedByMe({ id: map.id, room, token: map._editToken, title: map.title, color: map.color });
      if(typeof scheduleSave==='function' && !map._cloudEdit) scheduleSave();   // persist the token in the owner repo so re-publishing reuses it
@@ -195,7 +196,7 @@ index 8b459ba..a4b4e8a 100644
                  : 'Edit link copied - anyone with this link can edit.');
    }catch(e){ toast('Could not publish: '+(e.message||e)); }
  }
-@@ -14047,12 +14094,30 @@ async function accessApi(roomId, sub, opts){
+@@ -14224,12 +14270,30 @@ async function accessApi(roomId, sub, opts){
    try{ const r=await _collabFetch(base+(sub?('/'+sub):''), opts||{}); let d={}; try{ d=await r.json(); }catch(e){} return { status:r.status, ok:r.ok, d }; }
    catch(e){ return { status:0, ok:false, d:{} }; }
  }
@@ -230,7 +231,7 @@ index 8b459ba..a4b4e8a 100644
    }catch(e){ return null; }
  }
  function _accessRoomId(){ return (map && (map._cloudView || map._shareRoom || map.id)) || null; }
-@@ -14133,8 +14198,8 @@ function _renderAccessPanel(roomId, data){
+@@ -14310,8 +14374,8 @@ function _renderAccessPanel(roomId, data){
    ov.querySelector('.am-addbtn').onclick=async()=>{
      const login=ov.querySelector('.am-user').value; const role=ov.querySelector('.am-newrole').value;
      if(!login.trim()) return;
@@ -241,7 +242,7 @@ index 8b459ba..a4b4e8a 100644
      const res=await accessApi(roomId,'acl',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userId:u.id, login:u.login, role})});
      if(res&&res.ok){ toast('Added @'+u.login); openAccessPanel(roomId); }
      else toast(res&&res.status===400?'That user is already the owner':'Couldn\u2019t add collaborator');
-@@ -14368,6 +14433,10 @@ async function tryEnterLiveSession(){
+@@ -14545,6 +14609,10 @@ async function tryEnterLiveSession(){
    sel=null; history=[]; hpos=-1;
    const t=$('#mapTitle'); if(t) t.value=map.title;
    render();
@@ -252,7 +253,7 @@ index 8b459ba..a4b4e8a 100644
    Collab.join(room);
    return true;
  }
-@@ -14537,6 +14606,7 @@ _syncLookFx();
+@@ -14714,6 +14782,7 @@ _syncLookFx();
    requestAnimationFrame(()=>{ try{ if(isUiScaleAuto()) applyUiScale(getUiScale()); }catch(e){} });
    // Read-only shared link? Decode and render a view-only map - no store, no
    // login, no account needed by the recipient.
@@ -260,7 +261,7 @@ index 8b459ba..a4b4e8a 100644
    if(await tryEnterLiveSession()) return;
    if(await tryEnterSharedView()) return;
    // A #shared= link: if you're signed in, boot your app first (so "Your maps" + the
-@@ -14546,7 +14616,7 @@ _syncLookFx();
+@@ -14723,7 +14792,7 @@ _syncLookFx();
    const _openSharedAfterBoot=async()=>{ if(_sh) await openSharedInPlace(decodeURIComponent(_sh[1]), _sh[2]?decodeURIComponent(_sh[2]):null); };
    const {mode, loggedIn} = await initStore();
    if(mode==='cloud'){

@@ -6,7 +6,7 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
       args:
-        MINDSPARK_REF: ${MINDSPARK_REF:-4e81dc626b136054dba463dc188b7a6304c9bbeb}
+        MINDSPARK_REF: ${MINDSPARK_REF:-129ed8d60cc0e9952aef2298c1b425d573bd5d59}
     container_name: mindspark-collab
     restart: unless-stopped
     env_file: .env

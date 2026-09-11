@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Stage 1: the pinned MindSpark sources (app + the two pure worker modules).
 FROM alpine/git:latest@sha256:6f3b5029566da8e90b24945933dcd806be866b64b1e706f51828bf84faccf21b AS upstream
-ARG MINDSPARK_REF=4e81dc626b136054dba463dc188b7a6304c9bbeb
+ARG MINDSPARK_REF=129ed8d60cc0e9952aef2298c1b425d573bd5d59
 ARG CLIENT_PATCH=1
 WORKDIR /src
 RUN git clone https://github.com/prasadpatil25/MindSpark.git . && git checkout "$MINDSPARK_REF"
