@@ -26,14 +26,30 @@ test('client patch applies cleanly to the pinned upstream ref', { skip: !existsS
     "upstream index.html no longer has connect-src 'self'; update the injection in app.js");
 });
 
-// A #live= guest joins before initStore() runs, so the collab URL must be
-// discovered by a shared probe that the boot sequence awaits first.
-test('the patch makes boot await the health probe before a live join', () => {
+// Backend discovery (/healthz -> {"mode":"collab"}, one collabBase() resolver,
+// the boot awaiting the probe before a #live= join) is upstream since
+// MindSpark #50. The pinned upstream must have it, and the patch must not
+// carry it again.
+test('the pinned upstream discovers this backend by itself', { skip: !existsSync('upstream/src/.git') && 'run npm run fetch-upstream first' }, () => {
+  const app = readFileSync('upstream/src/public/app.js', 'utf8');
+  assert.match(app, /^function probeHealth\(\)/m, 'upstream probeHealth() missing - pinned ref predates #50?');
+  assert.match(app, /^function collabBase\(\)/m, 'upstream collabBase() missing');
+  const i = app.indexOf('await probeHealth();');
+  const j = app.indexOf('if(await tryEnterLiveSession()) return;');
+  assert.ok(i !== -1 && j !== -1 && i < j, 'upstream boot must await probeHealth() before tryEnterLiveSession()');
   const patch = readFileSync('docker/client-collab.patch', 'utf8');
-  assert.match(patch, /^\+function probeHealth\(\)/m, 'probeHealth() missing from the patch');
-  const i = patch.indexOf('+  await probeHealth();');
-  const j = patch.indexOf('if(await tryEnterLiveSession()) return;');
-  assert.ok(i !== -1 && j !== -1 && i < j, 'boot must await probeHealth() before tryEnterLiveSession()');
+  assert.doesNotMatch(patch, /^\+function probeHealth\(\)/m, 'the patch must not re-add probeHealth()');
+  assert.doesNotMatch(patch, /^\+function collabBase\(\)/m, 'the patch must not re-add collabBase()');
+});
+
+// Until the identity follow-up (MindSpark PR from sati-home/collab-forge-identity)
+// is merged, the patch carries it: the identity request names the forge, and
+// access control is keyed on a minted identity.
+test('the patch sends {token, forge, instance} and keys access control on the identity', () => {
+  const patch = readFileSync('docker/client-collab.patch', 'utf8');
+  assert.match(patch, /^\+.*forge:CloudStore\.forge&&CloudStore\.forge\.id, instance:CloudStore\.instance\|\|undefined/m);
+  assert.match(patch, /^\+\s*return collabAvailable\(\) && typeof Session!=='undefined' && !!Session\.id;/m);
+  assert.match(patch, /^\+async function _resolveCollaborator\(/m, 'collaborators are looked up on the signed-in forge');
 });
 
 // The WebSocket carries the identity as ?token= on the upgrade, and a live

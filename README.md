@@ -68,7 +68,7 @@ Users sign in from the app's login screen exactly as documented upstream: an acc
 
 ## The bundled app and the upstream pin
 
-`.upstream-ref` names the MindSpark commit or tag the container is built from. The bundled app is byte-identical to that release except for one small client patch, `docker/client-collab.patch`, which decouples collaboration from GitHub OAuth and lets the client discover this backend through `/healthz`. That patch is the change proposed upstream; once it lands there, an unmodified MindSpark build works as-is. To move to a newer MindSpark: change `.upstream-ref`, run `npm run fetch-upstream -- <ref> --patch`, run the tests (they check the patch still applies), rebuild.
+`.upstream-ref` names the MindSpark commit or tag the container is built from. Since MindSpark #50 the client discovers this backend by itself (`/healthz` answering `{"mode":"collab"}`), so an unmodified build already offers live sessions and shared maps here. The bundled app is byte-identical to the pinned release except for one small client patch, `docker/client-collab.patch`, which carries what is still pending upstream: the identity request naming the forge and access control keyed on the minted identity (proposed as a follow-up PR), and the identity on the WebSocket upgrade so rooms with an access list can gate live sessions too. Once those land, the patch goes away. To move to a newer MindSpark: change `.upstream-ref`, run `npm run fetch-upstream -- <ref> --patch`, run the tests (they check the patch still applies), rebuild.
 
 ## Development
 
