@@ -9,16 +9,16 @@ import { openStorage } from './storage.js';
 import { createSession } from './session.js';
 
 export function configFromEnv(env = process.env) {
-  const here = dirname(fileURLToPath(import.meta.url));
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');   // the repo / image root: data/ and upstream/ live there, not next to this module
   const list = s => String(s || '').split(',').map(x => x.trim()).filter(Boolean);
   const port = Number(env.PORT || 3000);
   const cfg = {
     port,
-    dataDir: env.DATA_DIR || join(here, 'data'),
+    dataDir: env.DATA_DIR || join(root, 'data'),
     authSecret: env.AUTH_SECRET || '',
     allowedInstances: list(env.ALLOWED_INSTANCES),
     allowedOrigin: (env.ALLOWED_ORIGIN || '').replace(/\/+$/, ''),
-    publicDir: env.PUBLIC_DIR || join(here, 'upstream', 'public'),
+    publicDir: env.PUBLIC_DIR || join(root, 'upstream', 'public'),
     trustProxy: /^(1|true|yes)$/i.test(env.TRUST_PROXY || ''),
     requireIdentity: /^(1|true|yes)$/i.test(env.REQUIRE_IDENTITY || ''),
     limits: {

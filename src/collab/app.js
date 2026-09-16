@@ -4,8 +4,8 @@
 import http from 'node:http';
 import { readFileSync, statSync, realpathSync } from 'node:fs';
 import { resolve, join, sep, extname } from 'node:path';
-import { handleCollabHttp } from './upstream/collab-http.js';
-import { verifyJWT, authorizeRequest } from './upstream/auth-core.js';
+import { handleCollabHttp } from '../../upstream/collab-http.js';
+import { verifyJWT, authorizeRequest } from '../../upstream/auth-core.js';
 import { acceptUpgrade } from './ws.js';
 import { createRooms } from './rooms.js';
 import { createLimits } from './limits.js';

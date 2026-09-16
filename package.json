@@ -4,10 +4,10 @@
   "description": "Self-hostable collaboration backend for MindSpark - a drop-in for the upstream worker, zero dependencies.",
   "license": "MIT",
   "type": "module",
-  "main": "server.js",
+  "main": "src/collab/server.js",
   "engines": { "node": ">=22" },
   "scripts": {
-    "start": "node --disable-warning=ExperimentalWarning server.js",
+    "start": "node --disable-warning=ExperimentalWarning src/collab/server.js",
     "test": "node --disable-warning=ExperimentalWarning --test \"test/**/*.test.mjs\"",
     "e2e": "node --disable-warning=ExperimentalWarning test/e2e.mjs",
     "fetch-upstream": "sh scripts/fetch-upstream.sh"

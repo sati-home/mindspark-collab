@@ -4,9 +4,9 @@ import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import net from 'node:net';
-import { createApp } from '../app.js';
-import { openStorage } from '../storage.js';
-import { createSession } from '../session.js';
+import { createApp } from '../src/collab/app.js';
+import { openStorage } from '../src/collab/storage.js';
+import { createSession } from '../src/collab/session.js';
 import { signJWT } from '../upstream/auth-core.js';
 
 const SECRET = 'test-secret';
@@ -182,7 +182,7 @@ describe('app', () => {
   });
 });
 
-import { configFromEnv } from '../server.js';
+import { configFromEnv } from '../src/collab/server.js';
 describe('config', () => {
   test('no AUTH_SECRET is fatal; ALLOWED_INSTANCES must be bare origins', () => {
     assert.throws(() => configFromEnv({}), /AUTH_SECRET is required/);

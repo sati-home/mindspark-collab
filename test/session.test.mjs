@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { createSession } from '../session.js';
+import { createSession } from '../src/collab/session.js';
 import { verifyJWT } from '../upstream/auth-core.js';
 
 // A fake forge: answers the user endpoint for one token, 401 otherwise.

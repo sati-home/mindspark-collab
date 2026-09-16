@@ -27,4 +27,4 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - run: docker build -f docker/Dockerfile --build-arg MINDSPARK_REF="$(cat .upstream-ref)" -t mindspark-collab:ci .
-      - run: docker run --rm -e AUTH_SECRET=ci mindspark-collab:ci node --disable-warning=ExperimentalWarning -e "import('/app/server.js').then(()=>console.log('boots'))"
+      - run: docker run --rm -e AUTH_SECRET=ci mindspark-collab:ci node --disable-warning=ExperimentalWarning -e "import('/app/src/collab/server.js').then(()=>console.log('boots'))"

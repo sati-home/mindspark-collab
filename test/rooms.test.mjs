@@ -2,7 +2,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { createRooms } from '../rooms.js';
+import { createRooms } from '../src/collab/rooms.js';
 
 // Fake sockets and storage: the relay logic is what's under test, not I/O.
 class FakeWs extends EventEmitter { constructor() { super(); this.sent = []; } send(t) { this.sent.push(JSON.parse(t)); } }

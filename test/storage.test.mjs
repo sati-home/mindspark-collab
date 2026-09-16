@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { openStorage } from '../storage.js';
+import { openStorage } from '../src/collab/storage.js';
 
 const dirs = [];
 const tmpFile = () => { const d = mkdtempSync(join(tmpdir(), 'msc-')); dirs.push(d); return join(d, 'collab.db'); };

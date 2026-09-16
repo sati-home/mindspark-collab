@@ -72,6 +72,8 @@ Users sign in from the app's login screen exactly as documented upstream: an acc
 
 ## Development
 
+The server lives in `src/collab/` (`server.js` is the entry point, everything else is what it imports); `docker/` holds the image and the client patch, `test/` the suite, `scripts/` the upstream fetch.
+
 - `npm run fetch-upstream` - clone the pinned MindSpark into `upstream/` (gitignored).
 - `npm test` - unit tests, plus upstream's own `auth-core` tests against the copied module.
 - `npm run e2e` - starts the server on a free port, two live clients, one HTTP snapshot round-trip.

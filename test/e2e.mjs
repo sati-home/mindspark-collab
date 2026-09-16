@@ -5,9 +5,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
-import { createApp } from '../app.js';
-import { openStorage } from '../storage.js';
-import { createSession } from '../session.js';
+import { createApp } from '../src/collab/app.js';
+import { openStorage } from '../src/collab/storage.js';
+import { createSession } from '../src/collab/session.js';
 import { signJWT } from '../upstream/auth-core.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'msc-e2e-'));

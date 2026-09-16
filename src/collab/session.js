@@ -2,7 +2,7 @@
 // The token is used for ONE request to the forge's user endpoint and dropped.
 // The subject is namespaced by forge and host so ids from different forges
 // (GitHub id 1 vs GitLab id 1) can never be the same person by accident.
-import { signJWT, verifyJWT } from './upstream/auth-core.js';
+import { signJWT, verifyJWT } from '../../upstream/auth-core.js';
 
 const strip = s => String(s || '').replace(/\/+$/, '');
 

@@ -1,7 +1,7 @@
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { acceptUpgrade } from '../ws.js';
+import { acceptUpgrade } from '../src/collab/ws.js';
 
 // An echo server built on the module under test; Node's built-in WebSocket is the client.
 function echoServer(opts) {

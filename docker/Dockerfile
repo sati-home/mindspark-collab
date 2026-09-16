@@ -11,7 +11,8 @@ RUN if [ "$CLIENT_PATCH" = "1" ]; then git apply /tmp/client-collab.patch; fi
 # Stage 2: the companion.
 FROM node:22.23.2-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32
 WORKDIR /app
-COPY package.json server.js app.js session.js rooms.js storage.js ws.js limits.js ./
+COPY package.json ./
+COPY src ./src
 COPY --from=upstream /src/public ./upstream/public
 COPY --from=upstream /src/worker/auth-core.js /src/worker/collab-http.js ./upstream/
 ENV NODE_ENV=production PORT=3000 DATA_DIR=/app/data
@@ -26,4 +27,4 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
 USER node
-CMD ["node", "--disable-warning=ExperimentalWarning", "server.js"]
+CMD ["node", "--disable-warning=ExperimentalWarning", "src/collab/server.js"]
