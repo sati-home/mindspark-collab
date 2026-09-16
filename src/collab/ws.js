@@ -6,6 +6,9 @@ import { EventEmitter } from 'node:events';
 import { createHash } from 'node:crypto';
 
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
+// Text frames must be valid UTF-8 (RFC 6455 8.1); Buffer#toString would
+// silently substitute U+FFFD, so decode strictly and close 1007 instead.
+const utf8 = new TextDecoder('utf-8', { fatal: true });
 
 export class ServerSocket extends EventEmitter {
   constructor(socket, maxFrame, destroyAfterMs = 3000) {
@@ -38,6 +41,7 @@ export class ServerSocket extends EventEmitter {
       if (this.buf.length < 2) return;
       const b0 = this.buf[0], b1 = this.buf[1];
       const fin = (b0 & 0x80) !== 0, op = b0 & 0x0f, masked = (b1 & 0x80) !== 0;
+      if (b0 & 0x70) return this.close(1002);           // RSV1-3 are only meaningful with a negotiated extension; there is none
       let len = b1 & 0x7f, off = 2;
       if (len === 126) { if (this.buf.length < 4) return; len = this.buf.readUInt16BE(2); off = 4; }
       else if (len === 127) { if (this.buf.length < 10) return; len = Number(this.buf.readBigUInt64BE(2)); off = 10; }
@@ -49,7 +53,7 @@ export class ServerSocket extends EventEmitter {
       const payload = Buffer.from(this.buf.subarray(off + 4, off + 4 + len));
       for (let i = 0; i < payload.length; i++) payload[i] ^= mask[i & 3];
       this.buf = this.buf.subarray(off + 4 + len);
-      if (op === 0x1) this.emit('message', payload.toString('utf8'));
+      if (op === 0x1) { let text; try { text = utf8.decode(payload); } catch { return this.close(1007); } this.emit('message', text); }
       else if (op === 0x8) { this.close(payload.length >= 2 ? payload.readUInt16BE(0) : 1005); return; }
       else if (op === 0x9) this.socket.write(frame(0xA, payload));
       // 0xA pong and 0x2 binary: ignored.
@@ -69,6 +73,12 @@ export function acceptUpgrade(req, socket, head, { maxFrame = 1024 * 1024, destr
   const key = req.headers['sec-websocket-key'];
   if (String(req.headers.upgrade || '').toLowerCase() !== 'websocket' || !key) {
     socket.write('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n'); socket.destroy();
+    return null;
+  }
+  // Only RFC 6455 (version 13) is spoken here; RFC 6455 4.2.2 says to answer
+  // 426 naming the versions the server does understand.
+  if (String(req.headers['sec-websocket-version'] || '').trim() !== '13') {
+    socket.write('HTTP/1.1 426 Upgrade Required\r\nSec-WebSocket-Version: 13\r\nConnection: close\r\n\r\n'); socket.destroy();
     return null;
   }
   const accept = createHash('sha1').update(key + GUID).digest('base64');

@@ -31,7 +31,11 @@ export function configFromEnv(env = process.env) {
   for (const [k, v] of Object.entries(cfg.limits)) if (!Number.isFinite(v) || v <= 0) throw new Error(`limits: ${k} must be a positive number`);
   if (!cfg.authSecret) throw new Error('AUTH_SECRET is required (generate one: openssl rand -hex 32)');
   if (!Number.isInteger(port) || port <= 0 || port >= 65536) throw new Error('PORT must be an integer between 1 and 65535');
-  for (const o of cfg.allowedInstances) { let u; try { u = new URL(o); } catch { throw new Error('ALLOWED_INSTANCES: not an origin: ' + o); } if (u.origin !== o) throw new Error('ALLOWED_INSTANCES: use bare origins: ' + o); }
+  cfg.allowedInstances = cfg.allowedInstances.map(o => {
+    let u; try { u = new URL(o); } catch { throw new Error('ALLOWED_INSTANCES: not an origin: ' + o); }
+    if (u.origin.toLowerCase() !== o.replace(/\/+$/, '').toLowerCase()) throw new Error('ALLOWED_INSTANCES: use bare origins: ' + o);
+    return u.origin;   // normalised (lower-case host), as session.js compares them
+  });
   return cfg;
 }
 

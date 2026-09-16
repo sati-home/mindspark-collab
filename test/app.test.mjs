@@ -371,3 +371,57 @@ describe('hardening', () => {
     assert.match(lines[0], /collab/);
   });
 });
+
+// The remaining low findings of the 2026-09-10 review: a cross-origin
+// deployment must tell caches the answer depends on Origin; a browser socket
+// from a foreign origin carries the user's cookies-equivalent (the identity
+// token on the URL) and is refused; static files answer 304 to a matching
+// ETag instead of shipping 790 KB on every reload.
+describe('hardening', () => {
+  const started = [];
+  after(() => started.forEach(s => { s.srv.close(); s.storage.close(); rmSync(s.dir, { recursive: true, force: true }); }));
+  const upgrade = (base, headers) => raw(base, 'GET /api/collab/r HTTP/1.1\r\nHost: ' + new URL(base).host + '\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n'
+    + 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n' + headers + '\r\n');
+
+  test('with ALLOWED_ORIGIN the JSON and preflight answers carry Vary: Origin; without it no CORS headers at all', async () => {
+    const s = await start({ allowedOrigin: 'https://app.example' }); started.push(s);
+    const h = (await fetch(s.base + '/healthz')).headers;
+    assert.equal(h.get('access-control-allow-origin'), 'https://app.example');
+    assert.match(h.get('vary') || '', /\bOrigin\b/);
+    const pre = await fetch(s.base + '/api/collab/r', { method: 'OPTIONS' });
+    assert.equal(pre.status, 204); assert.match(pre.headers.get('vary') || '', /\bOrigin\b/);
+    const plain = await start(); started.push(plain);
+    const p = (await fetch(plain.base + '/healthz')).headers;
+    assert.equal(p.get('access-control-allow-origin'), null); assert.equal(p.get('vary'), null);
+  });
+
+  test('a socket upgrade from a foreign Origin is refused 403; same-origin, the allowed origin and no Origin are accepted', async () => {
+    const s = await start(); started.push(s);
+    assert.match(await upgrade(s.base, 'Origin: https://evil.example\r\n'), /^HTTP\/1\.1 403 /);
+    assert.match(await upgrade(s.base, 'Origin: http://' + new URL(s.base).host + '\r\n'), /^HTTP\/1\.1 101 /, 'same host, any scheme');
+    assert.match(await upgrade(s.base, ''), /^HTTP\/1\.1 101 /, 'non-browser clients send no Origin');
+    const c = await start({ allowedOrigin: 'https://app.example' }); started.push(c);
+    assert.match(await upgrade(c.base, 'Origin: https://app.example\r\n'), /^HTTP\/1\.1 101 /);
+    assert.match(await upgrade(c.base, 'Origin: https://app.example.evil\r\n'), /^HTTP\/1\.1 403 /);
+  });
+
+  test('static files carry an ETag and answer 304 to a matching If-None-Match; the injected index has its own', async () => {
+    const s = await start(); started.push(s);
+    const r = await fetch(s.base + '/app.js');
+    const tag = r.headers.get('etag'); assert.ok(tag, 'ETag present');
+    const again = await fetch(s.base + '/app.js', { headers: { 'If-None-Match': tag } });
+    assert.equal(again.status, 304); assert.equal((await again.text()).length, 0);
+    assert.equal(again.headers.get('etag'), tag);
+    const idx = await fetch(s.base + '/');
+    assert.ok(idx.headers.get('etag') && idx.headers.get('etag') !== tag);
+    assert.equal((await fetch(s.base + '/', { headers: { 'If-None-Match': idx.headers.get('etag') } })).status, 304);
+    assert.equal((await fetch(s.base + '/app.js', { headers: { 'If-None-Match': '"stale"' } })).status, 200);
+  });
+});
+
+describe('config: instance origins', () => {
+  test('ALLOWED_INSTANCES accepts a mixed-case host and normalises it; a path is still refused', () => {
+    assert.deepEqual(configFromEnv({ AUTH_SECRET: 'x', ALLOWED_INSTANCES: 'https://GitLab.Example, https://codeberg.org' }).allowedInstances, ['https://gitlab.example', 'https://codeberg.org']);
+    assert.throws(() => configFromEnv({ AUTH_SECRET: 'x', ALLOWED_INSTANCES: 'https://gitlab.example/api' }), /bare origins/);
+  });
+});

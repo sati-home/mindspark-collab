@@ -3,6 +3,7 @@
 // on the room URLs. Same origin by default, so no CORS unless configured.
 import http from 'node:http';
 import { readFileSync, statSync, realpathSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { resolve, join, sep, extname } from 'node:path';
 import { handleCollabHttp } from '../../upstream/collab-http.js';
 import { verifyJWT, authorizeRequest } from '../../upstream/auth-core.js';
@@ -56,7 +57,9 @@ export function createApp({ publicDir, storage, session, authSecret, allowedInst
   const bearer = req => { const m = String(req.headers.authorization || '').match(/^Bearer\s+(.+)$/i); return m ? m[1] : ''; };
   const root = resolve(publicDir);
   const env = { AUTH_SECRET: authSecret };
-  const cors = allowedOrigin ? { 'Access-Control-Allow-Origin': allowedOrigin,
+  // Vary: Origin so a shared cache never hands one origin's answer to another;
+  // static files are same-origin by design and carry no CORS headers.
+  const cors = allowedOrigin ? { 'Access-Control-Allow-Origin': allowedOrigin, 'Vary': 'Origin',
     'Access-Control-Allow-Methods': 'GET, PUT, PATCH, POST, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, X-Edit-Token, Authorization' } : {};
   // req is optional: when given, the request's connection is dropped once the
@@ -108,6 +111,7 @@ export function createApp({ publicDir, storage, session, authSecret, allowedInst
   }
 
   const realRoot = (() => { try { return realpathSync(root); } catch { return root; } })();
+  const fileCache = new Map();
   function serveStatic(req, res) {
     const bare = status => { res.writeHead(status, SECURITY_HEADERS); res.end(); };
     let pathname; try { pathname = decodeURIComponent(new URL(req.url, 'http://x').pathname); } catch { return bare(400); }
@@ -121,9 +125,18 @@ export function createApp({ publicDir, storage, session, authSecret, allowedInst
     let st; try { st = statSync(real); } catch { return bare(404); }
     if (!st.isFile()) return bare(404);
     const type = TYPES[extname(file)] || 'application/octet-stream';
-    let body = readFileSync(real);
     const isHtml = file.endsWith(sep + 'index.html');
-    if (isHtml) body = Buffer.from(inject(body.toString('utf8')));
+    // Read once per (path, mtime, size): app.js alone is ~800 KB, and the ETag
+    // over the served bytes (post-injection for index.html) lets a reload
+    // revalidate with a 304 instead of transferring it again.
+    let entry = fileCache.get(real);
+    if (!entry || entry.mtimeMs !== st.mtimeMs || entry.size !== st.size) {
+      let body = readFileSync(real);
+      if (isHtml) body = Buffer.from(inject(body.toString('utf8')));
+      entry = { mtimeMs: st.mtimeMs, size: st.size, body, etag: '"' + createHash('sha1').update(body).digest('base64url') + '"' };
+      fileCache.set(real, entry);
+    }
+    const body = entry.body;
     // The OAuth callback lands in a popup coming from the forge (whose opener
     // policy is unsafe-none); if this document's policy differs, the browser
     // puts it in a new browsing-context group and window.opener is gone - so
@@ -131,7 +144,9 @@ export function createApp({ publicDir, storage, session, authSecret, allowedInst
     const headers = file.endsWith(sep + 'oauth-callback.html')
       ? { ...SECURITY_HEADERS, 'Cross-Origin-Opener-Policy': 'unsafe-none' }
       : (isHtml ? HTML_HEADERS : SECURITY_HEADERS);
-    res.writeHead(200, { ...headers, 'Content-Type': type, 'Cache-Control': 'no-cache' }); res.end(body);
+    const tags = String(req.headers['if-none-match'] || '').split(',').map(t => t.trim().replace(/^W\//, ''));
+    if (tags.includes(entry.etag)) { res.writeHead(304, { ...headers, 'ETag': entry.etag, 'Cache-Control': 'no-cache' }); return res.end(); }
+    res.writeHead(200, { ...headers, 'Content-Type': type, 'Cache-Control': 'no-cache', 'ETag': entry.etag }); res.end(body);
   }
 
   const server = http.createServer(async (req, res) => {
@@ -208,6 +223,15 @@ export function createApp({ publicDir, storage, session, authSecret, allowedInst
     catch { return refuse(socket, 400, 'Bad Request'); }
     const room = roomOf(url.pathname);
     if (!room) return refuse(socket, 404, 'Not Found');
+    // A browser always sends Origin on an upgrade and the URL may carry the
+    // user's identity token, so a page on a foreign origin must not be able to
+    // open a socket here with it: same host as the request, or ALLOWED_ORIGIN.
+    // No Origin (a non-browser client) is allowed, as with the HTTP API.
+    if (req.headers.origin) {
+      let ok = false;
+      try { const o = new URL(req.headers.origin); ok = o.host === req.headers.host || (!!allowedOrigin && o.origin === allowedOrigin); } catch {}
+      if (!ok) return refuse(socket, 403, 'Forbidden');
+    }
     if (!limits.allow(clientKey(req))) return refuse(socket, 429, 'Too Many Requests');
     (async () => {
       const identity = await wsIdentity(url);

@@ -97,3 +97,15 @@ describe('session endpoint', () => {
     assert.ok(Date.now() - t0 < 1000, 'gave up quickly');
   });
 });
+
+// Origins are case-insensitive in the host; an operator typing
+// https://GitLab.Example (or a client sending it) must match the same instance.
+describe('session: instance origin case', () => {
+  test('the allowlist and the request instance are compared as normalised origins', async () => {
+    const net = forgeNet([{ url: 'https://gitlab.example/api/v4/user', auth: 'Bearer t', user: { id: 7, username: 'ada' } }]);
+    const r = await createSession({ secret: SECRET, allowedInstances: ['https://GitLab.Example'], fetchImpl: net.fetchImpl })({ forge: 'gitlab', instance: 'https://gitlab.EXAMPLE', token: 't' });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.id, 'gitlab:gitlab.example:7', 'the subject carries the normalised host');
+    assert.equal(net.calls[0].url, 'https://gitlab.example/api/v4/user', 'the forge is called on the normalised origin');
+  });
+});

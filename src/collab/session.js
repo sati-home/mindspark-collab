@@ -32,7 +32,9 @@ const hostOf = instance => { if (!instance) return 'github.com'; try { return ne
 const errCode = err => String((err && (err.code || err.name)) || 'unknown');
 
 export function createSession({ secret, allowedInstances = [], fetchImpl = fetch, ttlSec = 12 * 60 * 60, timeoutMs = 10_000 }) {
-  const allowed = new Set(allowedInstances.map(strip));
+  // Hosts are case-insensitive: compare normalised origins on both sides.
+  const originOf = x => { try { return new URL(strip(x)).origin; } catch { return strip(x); } };
+  const allowed = new Set(allowedInstances.map(originOf));
   return async function session(body) {
     if (!secret) return { status: 501, body: { error: 'identity not configured' } };
     const forgeId = (body && body.forge) || 'github';
@@ -47,13 +49,14 @@ export function createSession({ secret, allowedInstances = [], fetchImpl = fetch
     if (forgeId !== 'github') {
       instance = strip(body.instance);
       let origin; try { origin = new URL(instance).origin; } catch { return { status: 400, body: { error: 'instance must be an origin' } }; }
-      if (origin !== instance || !allowed.has(origin)) {
+      if (origin.toLowerCase() !== instance.toLowerCase() || !allowed.has(origin)) {
         // One line an operator can grep for: the usual cause is an instance
         // missing from ALLOWED_INSTANCES, and silence made that look like a
         // client bug. Host only - the instance URL may carry credentials.
         console.warn(`session: refused instance forge=${forgeId} host=${hostOf(instance)} status=403`);
         return { status: 403, body: { error: 'instance not allowed' } };
       }
+      instance = origin;   // normalised from here on: the forge URL and the subject's host
     }
 
     let user;

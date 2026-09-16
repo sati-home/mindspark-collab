@@ -20,7 +20,14 @@ export function openStorage(file) {
   return {
     room(id) {
       return {
-        async get(key) { const r = q.get.get(id, key); return r ? JSON.parse(r.value) : undefined; },
+        // A value that fails to parse (a hand edit, a truncated write) reads as
+        // absent rather than failing every read of the room; the next put
+        // repairs it. Key only in the log - room ids are capabilities.
+        async get(key) {
+          const r = q.get.get(id, key); if (!r) return undefined;
+          try { return JSON.parse(r.value); }
+          catch { console.warn(`storage: corrupt value for key=${key}, treated as absent`); return undefined; }
+        },
         async put(key, value) { q.put.run(id, key, JSON.stringify(value), Date.now()); },
         async delete(key) { q.del.run(id, key); },
       };
