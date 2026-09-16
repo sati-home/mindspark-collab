@@ -24,18 +24,22 @@ browser ──▶ your forge: map JSON commits with your own token, exactly as w
 
 ## Run
 
+The image is published to GitHub Container Registry as `ghcr.io/sati-home/mindspark-collab` - `latest` and `<version>` from each release tag, `main` and `sha-<short>` from every commit on main. Each image carries the MindSpark ref it bundles as the label `io.mindspark.upstream-ref`.
+
 With Docker Compose (the file carries a traefik example - edit or drop the `labels`/`networks` and add a `ports:` mapping if you don't run traefik):
 
 ```sh
 cp docker/.env.example docker/.env      # AUTH_SECRET, ALLOWED_INSTANCES, COLLAB_HOST
-docker compose -f docker/compose.yml up -d --build
+docker compose -f docker/compose.yml up -d            # pulls the published image
+docker compose -f docker/compose.yml up -d --build    # or build it here
 ```
 
 With Podman, or plain Docker without compose:
 
 ```sh
+podman run -d -p 3000:3000 --env-file docker/.env -v collab-data:/app/data ghcr.io/sati-home/mindspark-collab:latest
+# or build locally:
 podman build -f docker/Dockerfile -t mindspark-collab .
-podman run -d -p 3000:3000 --env-file docker/.env -v collab-data:/app/data mindspark-collab
 ```
 
 The image carries a `HEALTHCHECK` on `/healthz`; Podman keeps it only when building with `--format docker` (OCI images have no such field).
@@ -78,6 +82,8 @@ The server lives in `src/collab/` (`server.js` is the entry point, everything el
 - `npm test` - unit tests, plus upstream's own `auth-core` tests against the copied module.
 - `npm run e2e` - starts the server on a free port, two live clients, one HTTP snapshot round-trip.
 - `.gitlab-ci.yml` - tests, GitLab SAST and secret detection, Trivy filesystem and image scans.
+- `.github/workflows/ci.yml` - the same tests on Node 22 and 24, the image build and boot check, and the publish to GHCR.
+- `AGENTS.md` - the conventions the tests enforce, for contributors and coding agents.
 
 ## Not (yet) here
 

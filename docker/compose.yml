@@ -1,7 +1,8 @@
-# docker/compose.yml - run next to your forge. Build context is the repo root.
+# docker/compose.yml - run next to your forge. `up -d` pulls the published
+# image; `up -d --build` builds it here instead (context is the repo root).
 services:
   mindspark-collab:
-    image: mindspark-collab
+    image: ghcr.io/sati-home/mindspark-collab:latest
     build:
       context: ..
       dockerfile: docker/Dockerfile

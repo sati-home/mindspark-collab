@@ -3,9 +3,17 @@
   "version": "0.1.0",
   "description": "Self-hostable collaboration backend for MindSpark - a drop-in for the upstream worker, zero dependencies.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sati-home/mindspark-collab.git"
+  },
+  "homepage": "https://github.com/sati-home/mindspark-collab#readme",
+  "bugs": "https://github.com/sati-home/mindspark-collab/issues",
   "type": "module",
   "main": "src/collab/server.js",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning src/collab/server.js",
     "test": "node --disable-warning=ExperimentalWarning --test \"test/**/*.test.mjs\"",
