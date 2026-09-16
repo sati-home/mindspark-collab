@@ -1,12 +1,9 @@
 # syntax=docker/dockerfile:1
 # Stage 1: the pinned MindSpark sources (app + the two pure worker modules).
 FROM alpine/git:latest@sha256:6f3b5029566da8e90b24945933dcd806be866b64b1e706f51828bf84faccf21b AS upstream
-ARG MINDSPARK_REF=ad338cf44c4f9a78046a2dc9fe26af29156117f1
-ARG CLIENT_PATCH=1
+ARG MINDSPARK_REF=b0e4b6298b8292dc62ae5c318d742c6100eaef6a
 WORKDIR /src
 RUN git clone https://github.com/prasadpatil25/MindSpark.git . && git checkout "$MINDSPARK_REF"
-COPY docker/client-collab.patch /tmp/client-collab.patch
-RUN if [ "$CLIENT_PATCH" = "1" ]; then git apply /tmp/client-collab.patch; fi
 
 # Stage 2: the companion.
 FROM node:22.23.2-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32

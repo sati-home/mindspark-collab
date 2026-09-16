@@ -44,7 +44,7 @@ podman build -f docker/Dockerfile -t mindspark-collab .
 
 The image carries a `HEALTHCHECK` on `/healthz`; Podman keeps it only when building with `--format docker` (OCI images have no such field).
 
-Without a container: `npm run fetch-upstream -- $(cat .upstream-ref) --patch`, then `AUTH_SECRET=… ALLOWED_INSTANCES=https://gitlab.example.com npm start`.
+Without a container: `npm run fetch-upstream`, then `AUTH_SECRET=… ALLOWED_INSTANCES=https://gitlab.example.com npm start`.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -72,11 +72,11 @@ Users sign in from the app's login screen exactly as documented upstream: an acc
 
 ## The bundled app and the upstream pin
 
-`.upstream-ref` names the MindSpark commit or tag the container is built from. Since MindSpark #50 the client discovers this backend by itself (`/healthz` answering `{"mode":"collab"}`), so an unmodified build already offers live sessions and shared maps here. The bundled app is byte-identical to the pinned release except for one small client patch, `docker/client-collab.patch`, which carries what is still pending upstream: the identity on the WebSocket upgrade, so rooms with an access list can gate live sessions the way the HTTP API does (the identity request naming the forge and the collaborator lookup on the signed-in forge landed as MindSpark #52). Once that lands, the patch goes away. To move to a newer MindSpark: change `.upstream-ref`, run `npm run fetch-upstream -- <ref> --patch`, run the tests (they check the patch still applies), rebuild.
+`.upstream-ref` names the MindSpark commit or tag the container is built from, and the bundled app is that release, byte for byte. Everything the companion needs from the client is upstream: the backend discovery (`/healthz` answering `{"mode":"collab"}`, MindSpark #50), the identity request naming the forge and the collaborator lookup on the signed-in forge (#52), and the identity on the WebSocket upgrade so rooms with an access list gate live sessions the way the HTTP API does (#54). To move to a newer MindSpark: change `.upstream-ref` (and the same default in `docker/Dockerfile` and `docker/compose.yml`), run `npm run fetch-upstream`, run the tests (they check the pinned client still carries all of the above), rebuild.
 
 ## Development
 
-The server lives in `src/collab/` (`server.js` is the entry point, everything else is what it imports); `docker/` holds the image and the client patch, `test/` the suite, `scripts/` the upstream fetch.
+The server lives in `src/collab/` (`server.js` is the entry point, everything else is what it imports); `docker/` holds the image and compose file, `test/` the suite, `scripts/` the upstream fetch.
 
 - `npm run fetch-upstream` - clone the pinned MindSpark into `upstream/` (gitignored).
 - `npm test` - unit tests, plus upstream's own `auth-core` tests against the copied module.

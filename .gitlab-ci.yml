@@ -20,7 +20,7 @@ test:
   image: node:22-alpine
   before_script:
     - apk add --no-cache git
-    - npm run fetch-upstream -- "$(cat .upstream-ref)" --patch
+    - npm run fetch-upstream
   script:
     - npm test
     - npm run e2e

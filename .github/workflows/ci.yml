@@ -21,7 +21,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ matrix.node }}
-      - run: npm run fetch-upstream -- "$(cat .upstream-ref)" --patch
+      - run: npm run fetch-upstream
       - run: npm test
       - run: npm run e2e
   # Build, boot-check, and on a push to main or a v* tag publish to GHCR.
