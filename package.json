@@ -1,6 +1,6 @@
 {
   "name": "mindspark-collab",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Self-hostable collaboration backend for MindSpark - a drop-in for the upstream worker, zero dependencies.",
   "license": "MIT",
   "repository": {
