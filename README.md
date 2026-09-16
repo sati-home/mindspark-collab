@@ -83,4 +83,6 @@ The server lives in `src/collab/` (`server.js` is the entry point, everything el
 
 The GitHub OAuth code exchange and the GPT map-import endpoint of the upstream worker. Access rules derived from forge project membership ("everyone who can write the project may edit") are a natural next step for single-forge teams.
 
-MIT.
+## License
+
+MIT - do anything you want with it. No restrictions.
