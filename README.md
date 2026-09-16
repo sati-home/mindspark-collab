@@ -84,6 +84,7 @@ The server lives in `src/collab/` (`server.js` is the entry point, everything el
 - `.gitlab-ci.yml` - tests, GitLab SAST and secret detection, Trivy filesystem and image scans.
 - `.github/workflows/ci.yml` - the same tests on Node 22 and 24, the image build and boot check, and the publish to GHCR.
 - `AGENTS.md` - the conventions the tests enforce, for contributors and coding agents.
+- `SECURITY.md` - how to report a vulnerability (privately, please).
 
 ## Not (yet) here
 

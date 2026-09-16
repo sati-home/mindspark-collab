@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: MindSpark itself (the app, the forge sign-in, the client)
+    url: https://github.com/prasadpatil25/MindSpark/issues
+    about: Bugs in the app or its client contract belong upstream. This repo is only the collaboration backend.
+  - name: Security issue
+    url: https://github.com/sati-home/mindspark-collab/security/advisories/new
+    about: Report privately, not as an issue. See SECURITY.md.

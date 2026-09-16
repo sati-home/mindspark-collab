@@ -1,0 +1,69 @@
+name: Bug report
+description: Something in the companion backend does not behave as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks. A few facts up front save a round trip: the companion is a drop-in for the upstream worker's client contract, so most reports need the versions on both sides.
+  - type: input
+    id: version
+    attributes:
+      label: Companion version
+      description: The image tag you run (`docker inspect` or the compose file), or the commit if you built it yourself.
+      placeholder: ghcr.io/sati-home/mindspark-collab:0.2.0
+    validations:
+      required: true
+  - type: input
+    id: upstream
+    attributes:
+      label: MindSpark pin
+      description: The value of `.upstream-ref` for that version, or the MindSpark commit if you changed the pin.
+      placeholder: b0e4b62
+  - type: dropdown
+    id: forge
+    attributes:
+      label: Forge
+      options:
+        - GitLab (self-managed)
+        - GitLab.com
+        - Gitea / Forgejo
+        - GitHub
+        - No forge, anonymous rooms only
+    validations:
+      required: true
+  - type: input
+    id: forge_version
+    attributes:
+      label: Forge version
+      placeholder: GitLab 18.3.1
+  - type: dropdown
+    id: proxy
+    attributes:
+      label: Behind a reverse proxy?
+      description: traefik, nginx, Caddy, Cloudflare... and whether `TRUST_PROXY=1` is set.
+      options:
+        - "Yes, TRUST_PROXY=1"
+        - "Yes, TRUST_PROXY not set"
+        - "No, the container is reached directly"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got. For the browser side, the console output and the failing request from the network tab help most.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Companion log lines
+      description: "`docker logs mindspark-collab` around the time of the problem. The log never contains tokens or room ids, so it is safe to paste."
+      render: text
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration
+      description: Your environment, without `AUTH_SECRET`. `ALLOWED_INSTANCES`, `REQUIRE_IDENTITY`, `ALLOWED_ORIGIN` and the caps matter most.
+      render: text
