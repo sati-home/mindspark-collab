@@ -42,14 +42,21 @@ test('the pinned upstream discovers this backend by itself', { skip: !existsSync
   assert.doesNotMatch(patch, /^\+function collabBase\(\)/m, 'the patch must not re-add collabBase()');
 });
 
-// Until the identity follow-up (MindSpark PR from sati-home/collab-forge-identity)
-// is merged, the patch carries it: the identity request names the forge, and
-// access control is keyed on a minted identity.
-test('the patch sends {token, forge, instance} and keys access control on the identity', () => {
+// The identity request naming the forge, access control keyed on the minted
+// identity and the collaborator lookup on the signed-in forge are upstream
+// since MindSpark #52. The pinned upstream must have them, and the patch must
+// not carry them again.
+test('the pinned upstream mints the identity for any forge and looks collaborators up there', { skip: !existsSync('upstream/src/.git') && 'run npm run fetch-upstream first' }, () => {
+  const app = readFileSync('upstream/src/public/app.js', 'utf8');
+  assert.match(app, /forge:CloudStore\.forge&&CloudStore\.forge\.id, instance:CloudStore\.instance\|\|undefined/, 'upstream Session.ensure() does not name the forge - pinned ref predates #52?');
+  assert.match(app, /^\s*return collabAvailable\(\) && typeof Session!=='undefined' && !!Session\.id;/m, 'upstream accessControlAvailable() is not keyed on Session.id');
+  assert.match(app, /^async function ensureCollabIdentity\(/m, 'upstream ensureCollabIdentity() missing');
+  assert.match(app, /^async function _resolveCollaborator\(/m, 'upstream _resolveCollaborator() missing');
   const patch = readFileSync('docker/client-collab.patch', 'utf8');
-  assert.match(patch, /^\+.*forge:CloudStore\.forge&&CloudStore\.forge\.id, instance:CloudStore\.instance\|\|undefined/m);
-  assert.match(patch, /^\+\s*return collabAvailable\(\) && typeof Session!=='undefined' && !!Session\.id;/m);
-  assert.match(patch, /^\+async function _resolveCollaborator\(/m, 'collaborators are looked up on the signed-in forge');
+  assert.doesNotMatch(patch, /^\+.*forge:CloudStore\.forge&&CloudStore\.forge\.id/m, 'the patch must not re-add the forge in the identity request');
+  assert.doesNotMatch(patch, /^\+async function ensureCollabIdentity\(/m, 'the patch must not re-add ensureCollabIdentity()');
+  assert.doesNotMatch(patch, /^\+async function _resolveCollaborator\(/m, 'the patch must not re-add _resolveCollaborator()');
+  assert.doesNotMatch(patch, /^\+.*userUrl\(r, login\)/m, 'the patch must not re-add the FORGES lookup pair');
 });
 
 // The WebSocket carries the identity as ?token= on the upgrade, and a live
